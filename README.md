@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Solidity code property graph extractor.</strong><br>
-  Whole-project extraction, cross-contract flow, deterministic output, and strict validation.
+  Cross-contract control and data flow with deterministic JSON and DOT exports.
 </p>
 
 <p align="center">
@@ -34,9 +34,9 @@ resolver.
 
 <p align="center"><code>Solidity project → solc + Slither → validated CPG JSON + focused DOT views</code></p>
 
-| Whole-project | Evidence-first | Reproducible |
+| Project scope | Target resolution | Reproducibility |
 | --- | --- | --- |
-| One graph across source files, contracts, libraries, and resolved imports | Cross-contract relations are emitted only for compiler-resolved targets | Canonical ordering, source hashes, compiler fingerprints, and strict validation |
+| One graph spans source files, contracts, libraries, and resolved imports | Cross-contract relations require compiler-resolved targets | Canonical ordering, source hashes, compiler fingerprints, and graph validation |
 
 ## Quick start
 
@@ -88,7 +88,7 @@ flowchart LR
     A["Solidity file or project"] --> B["Compatible solc"]
     B --> C["Slither AST, CFG, and SlithIR"]
     C --> D["Typed CPG"]
-    D --> E["Strict validator"]
+    D --> E["Graph validator"]
     E --> F["NetworkX JSON"]
     D --> G["Focused DOT views"]
 ```
@@ -123,7 +123,7 @@ The `spider` command validates the graph before it writes the JSON file.
 `spider-verify` is available for validating a graph again after copying,
 transforming, or loading it from another process.
 
-### Whole-project extraction
+### Project directory
 
 Pass a directory to compile its Solidity sources into one graph:
 
