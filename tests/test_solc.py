@@ -115,7 +115,7 @@ def test_cli_and_batch_record_actual_compiler(tmp_path: Path) -> None:
     shutil.copy(fixtures / "Control.sol", corpus / "Control.sol")
     review = tmp_path / "review"
     subprocess.run(
-        [sys.executable, str(Path(__file__).parents[1] / "scripts" / "batch_extract.py"), str(corpus), str(review)],
+        [sys.executable, "-m", "spider.batch", str(corpus), str(review)],
         check=True,
         capture_output=True,
         text=True,
@@ -132,7 +132,8 @@ def test_cli_and_batch_record_actual_compiler(tmp_path: Path) -> None:
     subprocess.run(
         [
             sys.executable,
-            str(Path(__file__).parents[1] / "scripts" / "batch_extract.py"),
+            "-m",
+            "spider.batch",
             str(corpus),
             str(timed_review),
             "--timeout",
