@@ -9,8 +9,17 @@
 
 <p align="center">
   <a href="https://github.com/ImAno177/spider/actions/workflows/ci.yml"><img src="https://github.com/ImAno177/spider/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10 or newer">
-  <img src="https://img.shields.io/badge/CPG-spider--cpg%2F1.0-111111" alt="CPG schema spider-cpg/1.0">
+  <a href="https://docs.python.org/3/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10 or newer"></a>
+  <a href="https://docs.soliditylang.org/"><img src="https://img.shields.io/badge/Solidity-multi--version-363636?logo=solidity&amp;logoColor=white" alt="Solidity multi-version analysis"></a>
+  <a href="./docs/SCHEMA.md"><img src="https://img.shields.io/badge/CPG-spider--cpg%2F1.0-111111" alt="CPG schema spider-cpg/1.0"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#graph-model">Graph model</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="./docs/SCHEMA.md">Schema</a> ·
+  <a href="./docs/ARCHITECTURE.md">Architecture</a>
 </p>
 
 Spider converts a Solidity source file or project directory into one typed code
@@ -23,7 +32,49 @@ The current graph format is `spider-cpg/1.0`. Spider extracts program structure;
 it is not a vulnerability scanner, symbolic executor, or runtime target
 resolver.
 
-## Output
+<p align="center"><code>Solidity project → solc + Slither → validated CPG JSON + focused DOT views</code></p>
+
+| Whole-project | Evidence-first | Reproducible |
+| --- | --- | --- |
+| One graph across source files, contracts, libraries, and resolved imports | Cross-contract relations are emitted only for compiler-resolved targets | Canonical ordering, source hashes, compiler fingerprints, and strict validation |
+
+## Quick start
+
+Spider requires Python 3.10 or newer and at least one Solidity compiler managed
+through `solc-select`. Graphviz is optional and is needed only to render DOT
+files as images.
+
+```bash
+git clone https://github.com/ImAno177/spider.git
+cd spider
+python -m pip install .
+
+solc-select install 0.8.20
+spider path/to/dapp out/dapp.json --export calls=out/calls.dot
+spider-verify out/dapp.json
+```
+
+Spider selects an installed compiler compatible with every non-empty pragma in
+the input. Install additional versions when processing older projects; the test
+fixtures exercise `0.4.25`, `0.8.11`, and `0.8.20`.
+
+<details>
+<summary>Install pinned runtime dependencies explicitly</summary>
+
+```bash
+python -m pip install \
+  "crytic-compile==0.3.11" \
+  "slither-analyzer==0.11.5" \
+  "solc-select==1.2.0"
+python -m pip install --no-deps .
+```
+
+</details>
+
+Spider fingerprints each selected compiler binary, checks its reported version,
+and stores the compiler and package versions in graph metadata.
+
+## Graph model
 
 The `spider` CLI writes one validated JSON graph. `spider-batch` writes one graph
 per successful corpus item plus a provenance manifest. For a source file, the
@@ -31,6 +82,16 @@ graph includes its compiler-resolved imports. For a project directory, Spider
 compiles all discovered `.sol` sources together so calls, arguments, returns,
 control flow, and state effects can cross file and contract boundaries. Optional
 DOT exports provide smaller views of the same graph.
+
+```mermaid
+flowchart LR
+    A["Solidity file or project"] --> B["Compatible solc"]
+    B --> C["Slither AST, CFG, and SlithIR"]
+    C --> D["Typed CPG"]
+    D --> E["Strict validator"]
+    E --> F["NetworkX JSON"]
+    D --> G["Focused DOT views"]
+```
 
 | Area | Extracted information |
 | --- | --- |
@@ -47,47 +108,11 @@ compiler. Dynamic addresses, proxy implementations, callbacks, and unresolved
 `delegatecall` targets are retained as calls but are not linked to guessed
 implementations.
 
-## Requirements
+## Usage
 
-- Python 3.10 or newer
-- One or more Solidity compiler versions installed through `solc-select`
-- Graphviz only when converting DOT exports to images
+### Source file
 
-Install from the repository:
-
-```bash
-git clone https://github.com/ImAno177/spider.git
-cd spider
-python -m pip install .
-```
-
-This command installs Spider and the runtime dependencies pinned in
-`pyproject.toml`. To download those dependencies explicitly before installing
-Spider, run:
-
-```bash
-python -m pip install \
-  "crytic-compile==0.3.11" \
-  "slither-analyzer==0.11.5" \
-  "solc-select==1.2.0"
-python -m pip install --no-deps .
-```
-
-Install the compiler versions required by the contracts you plan to process.
-These versions cover the repository fixtures:
-
-```bash
-solc-select install 0.4.25
-solc-select install 0.8.11
-solc-select install 0.8.20
-```
-
-Spider fingerprints each selected compiler binary, checks its reported
-version, and stores the compiler and package versions in graph metadata.
-
-## Command-line usage
-
-Extract an entry source and verify the written graph:
+Extract one entry source and its compiler-resolved imports:
 
 ```bash
 spider contracts/Vault.sol out/vault.json
@@ -224,14 +249,17 @@ Install the development dependencies, then run the repository gates:
 
 ```bash
 python -m pip install -e '.[dev]'
-python -m pytest -q
+python -m pytest tests -q --durations=10
 python -m ruff check .
 python -m compileall -q spider tests scripts
 python -m pip wheel . --no-deps --wheel-dir out/wheels
 ```
 
-The test suite covers source anchors, control and evaluation order, modifier
-overlays, calls and returns, storage access, argument producers, state effects,
+`pyproject.toml` also sets `testpaths = ["tests"]`; CI names the folder explicitly
+and prints the ten slowest tests. The workflow is intentionally triggered only
+by changes under `spider/**`, but once triggered it runs the complete test suite.
+The suite covers source anchors, control and evaluation order, modifier overlays,
+calls and returns, storage access, argument producers, state effects,
 inline-assembly coverage, and verifier rejection of corrupted graphs.
 
 ## Current limitations
