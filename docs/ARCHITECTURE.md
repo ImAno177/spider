@@ -1,70 +1,88 @@
 # Architecture
 
-Spider is intentionally a small compiler-backed pipeline rather than a query
-server or framework.
+Spider has five stages: compiler selection, project construction, graph
+extraction, canonicalization, and validation.
 
 ```text
-Solidity entry file
+Solidity entry source
   -> pragma parsing and compiler fingerprinting
-  -> solc + Slither project compilation
-  -> declarations and source anchors
-  -> CFG blocks and ordered SlithIR operations
-  -> reaching definitions and control dependence
-  -> source-resolved calls, modifiers, returns, and state effects
-  -> canonical node IDs/order
-  -> structural verifier
-  -> NetworkX node-link JSON and optional DOT
+  -> solc and Slither project construction
+  -> declarations, source anchors, CFG blocks, and SlithIR operations
+  -> control flow, data flow, modifiers, calls, returns, and state effects
+  -> canonical node IDs and edge order
+  -> graph validation
+  -> NetworkX node-link JSON and optional DOT views
 ```
 
 ## Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `spider/solc.py` | Parse pragmas, fingerprint installed compilers, and choose deterministic compatible candidates. |
-| `spider/extract.py` | Compile the project and construct the typed graph. |
-| `spider/verify.py` | Recompute and validate structural, control-flow, data-flow, call, and modifier invariants. |
-| `spider/__main__.py` | Single-entry extraction CLI and repeated multi-view exports. |
-| `spider/batch.py` | Isolated corpus extraction with JSONL provenance and summary output. |
+| `spider/solc.py` | Parse pragmas, fingerprint installed compilers, and choose compatible candidates in a deterministic order. |
+| `spider/extract.py` | Construct the typed graph and serialize DOT views. |
+| `spider/verify.py` | Recompute and validate source, structure, control-flow, data-flow, call, return, modifier, and state-effect invariants. |
+| `spider/__main__.py` | Extract and validate one project, write JSON, and process repeated DOT exports. |
+| `spider/batch.py` | Run isolated corpus extractions and write JSONL provenance and aggregate results. |
 
 ## Compiler selection
 
-Spider reads the entry file pragma, enumerates installed release compilers, and
-tries compatible candidates deterministically. Each executable is checked by
-SHA-256 and `--version`; mislabeled or prerelease binaries are rejected.
+Spider reads the entry source pragma and inspects installed release compilers.
+Every candidate executable is identified by SHA-256 and checked with
+`--version`; prerelease and mislabeled binaries are rejected.
 
-For pre-1.0 Solidity, Spider tries the earliest compatible minor family first
-and the newest patch within that family. Failed candidates remain visible until
-one successfully constructs the Slither project.
+Compatible candidates are tried in deterministic order. For pre-1.0 Solidity,
+Spider tries the earliest compatible minor family first and the newest patch
+within that family. If no candidate constructs the Slither project, the final
+candidate failure is raised.
 
-## Graph construction
+## Project construction
 
-Declarations are registered before function bodies so imported and inherited
-references can resolve by canonical source identity. Each Slither CFG node owns
-ordered SlithIR operation nodes. Empty blocks forward evaluation to their CFG
-successors.
+Slither compiles the entry source and resolves its imports. Spider creates one
+source manifest entry for every resolved source unit and records raw-byte
+SHA-256, byte length, encoding, and canonical path. Graph scope is `project`
+when nodes originate from more than one source unit and `file` otherwise.
 
-Reaching definitions are computed as a CFG fixpoint. Temporary and reference
-producers are function-scoped; declared locals and state variables use the
-reaching definitions proven at each consumer.
+Declarations are registered before function bodies. This lets references from
+imports and inheritance resolve through canonical source identity rather than
+the order in which Slither returns objects.
 
-## Interprocedural overlay
+## Intraprocedural extraction
 
-Only compiler-resolved source targets receive semantic call edges. Spider adds
-argument/parameter binding, return/caller binding, XCFG entry/continuation
-edges, and a finite state-effect fixpoint through calls and modifiers.
+Each Slither CFG block owns its ordered SlithIR operation nodes. `EVAL_ORDER`
+preserves operation order within a block and forwards through empty CFG blocks.
+Dominance, post-dominance, control dependence, reads, writes, and reaching
+definitions are derived after the base CFG is present.
 
-Unresolved calls retain a typed `CALL_TARGET` but do not receive a guessed
-source implementation.
+Temporary and reference producers remain function-scoped. Local and state
+variable consumers use definitions that reach the consumer's CFG position.
+Index and member accesses keep explicit base/key and base/field provenance.
 
-## Determinism
+## Interprocedural extraction
 
-Before serialization, Spider applies an attributed neighborhood refinement to
-canonicalize node order and IDs independently of Slither collection order.
-Edges are sorted by their complete serialized payload.
+Calls receive semantic interprocedural relations only when their source target
+is resolved. Spider binds argument positions to parameters, formal return
+positions to callers, and callee entry/exit points to callsite continuations.
 
-## Verification
+Direct state effects are collected from functions and modifiers. Transitive
+effects are then computed to a deterministic fixpoint over resolved call and
+modifier dependencies. Unresolved calls keep their typed call relations but do
+not receive an inferred source implementation.
 
-The verifier does not trust extractor metadata. It recomputes vocabularies,
-control dependence, evaluation order, call/return structure, modifier overlays,
-state effects, access provenance, and source-anchor constraints. An invalid
-graph causes the extraction CLI to exit non-zero before writing output.
+## Canonicalization
+
+Before serialization, attributed neighborhood refinement assigns node order
+and IDs independently of Slither collection order. Edges are sorted by their
+complete serialized payload. Host-specific absolute paths are excluded from
+the canonical node-order key; `file_id` and source anchors carry source
+identity within the graph.
+
+## Validation and output
+
+The validator recomputes graph vocabularies and checks source anchors, control
+and evaluation order, access provenance, call/return bindings, modifier
+overlays, and state-effect summaries. The extraction CLI exits with a non-zero
+status before writing output when validation fails.
+
+The required output is one `spider-cpg/1.0` NetworkX node-link JSON document.
+Repeated `--export` options can also write focused DOT views without recompiling
+the project.

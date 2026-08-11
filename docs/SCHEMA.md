@@ -3,7 +3,7 @@
 Spider emits directed NetworkX node-link JSON with format identifier
 `spider-cpg/1.0`.
 
-## Top-level shape
+## Document shape
 
 ```json
 {
@@ -15,39 +15,97 @@ Spider emits directed NetworkX node-link JSON with format identifier
 }
 ```
 
-`graph.node_types` and `graph.edge_types` equal the sorted labels actually
-present. Consumers should build corpus vocabularies by taking their union.
+`nodes` contains typed program entities and operations. `links` contains typed
+directed relations. Parallel relations between the same pair of nodes are
+allowed.
 
-## Required node fields
+## Graph metadata
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Canonical label-prefixed identifier within the graph. |
-| `label` | Stable semantic node type. |
-| `name` | Human-readable declaration or operation representation. |
+| `format` | Graph contract identifier, currently `spider-cpg/1.0`. |
+| `tool` | Extractor name, `Spider`. |
+| `source` | Resolved absolute path of the entry source. |
+| `scope` | `file` for one resolved source unit or `project` for multiple source units. |
+| `node_type_key`, `edge_type_key` | Field containing the semantic type of each node or edge; both are `label`. |
+| `position_key` | Field containing canonical node position, `order`. |
+| `schema` | Human-readable graph schema name. |
+| `attribute_schema` | Finite semantic-attribute contract, currently `spider-attributes/1`. |
+| `source_anchor_schema` | Source-anchor contract, currently `spider-source-anchor/1`. |
+| `source_anchor_unit`, `source_hash` | Byte-range unit and source hashing convention. |
+| `extractor_version` | Installed `spider-solidity-cpg` package version. |
+| `slither_version`, `solc_select_version` | Installed dependency versions. |
+| `solc_version`, `solc_args` | Selected compiler release and arguments. |
+| `compiler_semantic_regime` | Whether the selected release uses checked arithmetic by default. |
+| `node_types`, `edge_types` | Sorted labels present in this graph. |
+| `source_files` | Ordered manifest of compiler-resolved source units. |
+| `source_mapping_coverage` | Counts of `present`, `missing`, and `synthetic` node mappings. |
+| `node_ordering` | Canonicalization algorithm identifier, currently `spider-canonical-v1`. |
+| `has_inline_assembly` | Whether a contract-level node reports inline assembly. |
+| `unsupported_semantics` | Explicit list of encountered semantics that are not expanded. |
+| `learnable_attribute_keys` | Finite feature fields approved by the attribute schema. |
+
+Consumers should derive a corpus vocabulary from the union of `node_types` and
+`edge_types` across its graphs.
+
+## Node fields
+
+Every node contains the following fields. A source position may be `null` when
+Slither does not provide an exact mapping or when Spider creates a synthetic
+node.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Canonical label-prefixed identifier unique within the graph. |
+| `label` | Semantic node type. |
+| `name` | Declaration name or operation representation. |
 | `order` | Unique contiguous canonical rank. |
+| `file` | Canonical absolute source path, or `null`. |
 | `file_id` | Index into `graph.source_files`, or `null`. |
-| `byte_start`, `byte_end` | Half-open UTF-8 byte span, or `null`. |
+| `line_start`, `line_end` | Compiler-reported inclusive line range, or `null`. |
+| `column_start`, `column_end` | Compiler-reported columns, or `null`. |
+| `byte_start`, `byte_end` | Half-open UTF-8 byte range, or `null`. |
+| `code` | Trimmed source text decoded from the byte range, or an empty string. |
 | `source_mapping_status` | `present`, `missing`, or `synthetic`. |
 | `anchor_origin` | `exact`, `cfg_fallback`, `missing`, or `synthetic`. |
 
-## Required edge fields
+Node types may add finite semantic attributes such as declaration role,
+visibility, mutability, operator family, data location, or type family.
+
+## Edge fields
 
 Every edge contains `source`, `target`, and `label`. Relation-specific fields
-include `argument_index`, `return_index`, `callsite`, `variable`, `guard`,
-`branch`, and `transitive`.
+may include `argument_index`, `return_index`, `operand_index`,
+`modifier_index`, `callsite`, `variable`, `guard`, `via`, `branch`, and
+`transitive`.
 
-## Source manifest
+Representative relation groups are:
+
+| Group | Labels |
+| --- | --- |
+| Structure | `AST`, `CONTAINS`, `OPERAND`, `REF` |
+| Control | `CFG`, `EVAL_ORDER`, `TRUE_BRANCH`, `FALSE_BRANCH`, `TRY_SUCCESS`, `TRY_FAILURE`, `DOMINATE`, `POST_DOMINATE`, `CDG` |
+| Data | `READS`, `WRITES`, `STATE_READ`, `STATE_WRITE`, `REACHING_DEF` |
+| Access | `INDEX_BASE`, `INDEX_KEY`, `MEMBER_BASE`, `MEMBER_FIELD` |
+| Calls | `INTERNAL_CALL`, `EXTERNAL_CALL`, `LOW_LEVEL_CALL`, `DELEGATECALL`, `ETHER_SEND`, `ETHER_TRANSFER` |
+| Interprocedural | `VALUE_TO_ARGUMENT`, `ARGUMENT_TO_PARAMETER`, `RETURN_VALUE`, `RETURN_TO_CALLER`, `XCFG_CALL`, `XCFG_RETURN` |
+| Effects | `CALL_READS_STATE`, `CALL_WRITES_STATE` |
+
+The complete vocabulary for a graph is stored in its metadata.
+
+## Source manifest and anchors
 
 `graph.source_files` is ordered by canonical path. Every entry contains:
 
-- `file_id`;
-- canonical `path`;
-- SHA-256 of raw source bytes;
-- byte length; and
-- `utf-8` encoding.
+- `file_id`
+- canonical `path`
+- SHA-256 of the raw source bytes
+- byte length
+- `utf-8` encoding
 
-The pair `(file_id, byte_start, byte_end)` is the source lookup key.
+The tuple `(file_id, byte_start, byte_end)` is the source lookup key. Byte
+ranges are half-open and refer to the raw UTF-8 source bytes recorded by the
+manifest. `code` is derived from that range when the mapping is present.
 
 ## Access provenance
 
@@ -55,36 +113,50 @@ Every `INDEX_ACCESS` has exactly one `INDEX_BASE` and one `INDEX_KEY`. Every
 `MEMBER_ACCESS` has exactly one `MEMBER_BASE` and one `MEMBER_FIELD`; the field
 target is a `MEMBER_NAME` child.
 
-Nested access remains compositional. For
+Nested accesses remain compositional. In
 `records[msg.sender].blockNumber`, the member base targets the index operation,
-whose own base and key target `records` and `msg.sender`.
+whose base and key target `records` and `msg.sender`.
 
 ## Calls and returns
 
-- `ARGUMENT` indexes a call's argument wrapper.
-- `VALUE_TO_ARGUMENT` connects a proven producer operation to that wrapper.
-- `ARGUMENT_TO_PARAMETER` binds a source-resolved argument position.
+- `ARGUMENT` links a call operation to its indexed argument wrapper.
+- `VALUE_TO_ARGUMENT` links each proven producer operation to that wrapper.
+- `ARGUMENT_TO_PARAMETER` binds a source-resolved argument position to a formal
+  parameter.
 - `RETURN_VALUE` binds a return operation to a formal return position.
-- `RETURN_TO_CALLER` binds that position back to the callsite.
+- `RETURN_TO_CALLER` binds that formal return position to the callsite.
 - `XCFG_CALL` enters an implemented source target.
-- `XCFG_RETURN` returns to the exact evaluation continuation.
+- `XCFG_RETURN` connects the target exit to the callsite's evaluation
+  continuation.
 
-`CALL_READS_STATE` and `CALL_WRITES_STATE` summarize state effects. Their
-boolean `transitive` attribute is false for a direct callee effect and true when
-the effect is inherited through a nested source-resolved call or modifier.
+`ARGUMENT` and `VALUE_TO_ARGUMENT` can describe an unresolved callsite.
+Target-dependent bindings (`ARGUMENT_TO_PARAMETER`, `RETURN_TO_CALLER`,
+`XCFG_CALL`, and `XCFG_RETURN`) are emitted only when the compiler resolves a
+source target. Runtime addresses and unresolved dynamic targets do not receive
+guessed target bindings.
+
+`CALL_READS_STATE` and `CALL_WRITES_STATE` summarize state effects. The
+`transitive` field is `false` for a direct callee effect and `true` when the
+effect is inherited through a nested resolved call or modifier.
 
 ## Semantic attributes
 
-`graph.attribute_schema` is `spider-attributes/1`. The
-`graph.learnable_attribute_keys` whitelist contains finite compiler-derived
-features such as declaration role, visibility, mutability, data location, type
-family, operator family, literal category, and builtin role.
+`graph.attribute_schema` is `spider-attributes/1`.
+`graph.learnable_attribute_keys` lists finite compiler-derived features that
+can be used without treating identifiers or source text as categorical
+vocabulary.
 
-Raw names, code, values, IDs, orders, and vulnerability labels are not included
-in that whitelist.
+Raw names, code, literal values, IDs, canonical order, and vulnerability labels
+are not included in the learnable-attribute whitelist.
 
 ## Compatibility
 
-The format identifier is stable across additive node/edge vocabulary changes.
-Do not mix graphs built by different Spider versions in one model artifact
-without rebuilding its vocabulary, canonical hashes, and experiment signature.
+Consumers should check `graph.format` before loading a graph and record
+`extractor_version` with derived datasets. Additive node or edge labels may
+appear while the format remains `spider-cpg/1.0`; consumers must therefore use
+the vocabularies stored in each graph rather than a hard-coded label list.
+
+A change to required fields, field meanings, anchor units, or relation
+semantics requires a new graph format identifier. Graphs produced by different
+extractor versions should not be mixed in one model artifact without rebuilding
+its vocabulary, canonical hashes, and experiment signature.

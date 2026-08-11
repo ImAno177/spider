@@ -1,26 +1,25 @@
 # Roadmap
 
-Spider prioritizes source-faithful Solidity semantics over speculative target
-inference.
+This roadmap records intended work, not release commitments. Changes must keep
+inferred relations separate from compiler-resolved facts.
 
-## Near term
+## Planned
 
-- Add a stable query helper for common graph traversals without introducing a
-  server runtime.
-- Benchmark extraction and verification on larger multi-file projects.
-- Publish a machine-readable schema reference and compatibility matrix.
-- Expand fixtures for custom errors, user-defined value types, and newer Yul
-  boundary cases.
+- Add query helpers for common graph traversals.
+- Publish a machine-readable schema reference and version compatibility table.
+- Benchmark extraction and validation on larger multi-file projects.
+- Expand compiler and fixture coverage for custom errors, user-defined value
+  types, and recent Solidity syntax.
 
-## Research directions
+## Under consideration
 
-- Storage-slot and alias modeling with explicit confidence boundaries.
+- Storage-slot and alias relations with explicit evidence and confidence.
 - Optional context-sensitive interprocedural summaries.
-- A maintained bridge to general CPG query engines.
-- Structured Yul/EVM subgraphs that remain linked to Solidity source anchors.
+- Structured Yul and EVM subgraphs linked to Solidity source anchors.
 
-## Non-goals
+## Out of scope
 
 - Guessing proxy implementations, callbacks, or dynamic runtime targets.
 - Replacing symbolic execution or a full smart-contract security audit.
-- Hiding compiler, parser, or unsupported-semantics failures.
+- Treating compiler, parser, or unsupported-semantics failures as successful
+  extraction.

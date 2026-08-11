@@ -5,6 +5,12 @@ All notable changes to Spider are documented here. The project follows
 
 ## [Unreleased]
 
+### Documentation
+
+- Rewrote the project introduction around the extractor's actual inputs,
+  outputs, relation scope, and limitations.
+- Expanded the schema reference and architecture description.
+
 ## [0.2.0] - 2026-08-11
 
 ### Added
@@ -26,11 +32,13 @@ All notable changes to Spider are documented here. The project follows
 - DOT node labels use real Graphviz line breaks.
 - Windows compiler targets are drive-relative to support solc 0.8.11 imports.
 
-### Breaking changes
+### Packaging and schema
 
 - The graph schema is `spider-cpg/1.0` and the Python import path is `spider`.
-- Old command aliases and duplicate character-offset fields were removed.
+- The public commands are `spider`, `spider-batch`, and `spider-verify`.
+- Source positions use UTF-8 byte offsets; duplicate character-offset fields
+  are not part of the schema.
 - Downstream graph artifacts and vocabularies must be rebuilt.
 
-[Unreleased]: https://github.com/ImAno177/spider/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/ImAno177/spider/releases/tag/v0.2.0
+[Unreleased]: https://github.com/ImAno177/spider/compare/672b99fc7f42cca05d8ff7b8183003915a43ba03...HEAD
+[0.2.0]: https://github.com/ImAno177/spider/commit/672b99fc7f42cca05d8ff7b8183003915a43ba03

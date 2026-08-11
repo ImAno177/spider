@@ -1,7 +1,7 @@
 # Contributing to Spider
 
-Thank you for improving Spider. Changes should preserve compiler-derived
-Solidity semantics, deterministic output, and verifier strictness.
+Contributions must preserve compiler-derived Solidity semantics, deterministic
+output, and validator coverage.
 
 ## Development setup
 
@@ -16,9 +16,10 @@ Install the Solidity compiler versions required by the fixtures:
 ```bash
 solc-select install 0.4.25
 solc-select install 0.8.11
+solc-select install 0.8.20
 ```
 
-## Before opening a pull request
+## Required checks
 
 Run all local gates:
 
@@ -44,7 +45,13 @@ cross-contract behavior, also run `spider-batch` on a representative corpus.
 - Do not weaken validation to accept output the extractor cannot justify.
 - Keep generated graphs, wheels, caches, and corpus outputs out of commits.
 
-## Pull requests
+## Pull request description
 
-Describe the root cause, the semantic change, tests run, and compatibility
-impact. Keep unrelated refactors out of the same pull request.
+Include:
+
+- the problem and its root cause
+- the resulting semantic or interface change
+- tests and corpus checks run
+- graph-format or downstream compatibility impact
+
+Keep unrelated refactors out of the same pull request.

@@ -18,7 +18,10 @@ Include:
 - minimal reproduction steps; and
 - whether the report concerns Spider itself or an analyzed contract.
 
-Spider is a program-analysis tool, not a guarantee that a contract is secure.
-Missing findings, unsupported semantics, and false positives should normally be
-reported as correctness issues unless they create a vulnerability in Spider or
-its users' systems.
+This policy covers vulnerabilities in Spider, its packaging, and its processing
+of untrusted Solidity input. Spider extracts program graphs; it does not certify
+that an analyzed contract is secure.
+
+Incorrect graph relations, unsupported contract semantics, and extraction
+failures should normally be reported as correctness issues unless they create a
+security impact in Spider or a downstream system.

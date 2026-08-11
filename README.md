@@ -5,67 +5,106 @@
 <h1 align="center">Spider</h1>
 
 <p align="center">
-  A compiler-backed Solidity code property graph extractor and verifier.
+  Solidity code property graph extraction and validation.
 </p>
 
-Spider compiles Solidity with a pragma-compatible `solc`, derives semantic
-operations from Slither/SlithIR, and emits a deterministic typed CPG as
-NetworkX node-link JSON. It models control flow, data dependence, modifiers,
-calls, indexed/member storage access, and source-resolved cross-contract flow.
+Spider converts a Solidity entry source and its compiler-resolved imports into
+a typed code property graph (CPG). It selects an installed `solc` version that
+satisfies the source pragma, builds the project with Slither, derives control-
+and data-flow relations from its AST, CFG, and SlithIR, then validates the graph
+before writing NetworkX node-link JSON.
 
-The current graph format is `spider-cpg/1.0`.
+The current graph format is `spider-cpg/1.0`. Spider extracts program structure;
+it is not a vulnerability scanner, symbolic executor, or runtime target
+resolver.
 
-## Highlights
+## Output
 
-- Compiler-backed extraction across historical and current Solidity releases.
-- Exact UTF-8 byte spans and SHA-256 manifests for every resolved source unit.
-- Typed AST, CFG, evaluation order, dominance, control dependence, and reaching
-  definitions.
-- Solidity-specific state reads/writes, modifiers, Ether transfers, low-level
-  calls, return checks, and inline-assembly coverage flags.
-- Exact index base/key and member base/field provenance.
-- Source-resolved argument, return, XCFG, and transitive state-effect flow
-  across contracts and imports.
-- Deterministic canonical node IDs and strict structural verification.
-- Focused Graphviz exports for AST, CFG, CDG, DDG, PDG, calls, or the full CPG.
+Every successful command-line extraction writes one validated JSON graph. The
+graph covers the entry source and every imported source unit resolved during
+compilation. Optional DOT exports provide smaller views of the same graph.
 
-## Installation
+| Area | Extracted information |
+| --- | --- |
+| Declarations | Contracts, interfaces, libraries, functions, modifiers, parameters, returns, local variables, and state variables |
+| Program structure | AST containment, CFG, SlithIR evaluation order, dominance, post-dominance, and control dependence |
+| Data flow | Reads, writes, state access, operands, references, and reaching definitions |
+| Storage access | Index base/key and member base/field provenance |
+| Calls | Internal, external, low-level, delegate, Ether send, and Ether transfer operations |
+| Interprocedural flow | Argument-to-parameter, return-to-caller, source-resolved cross-function and cross-contract control flow, and direct/transitive state effects |
+| Provenance | Compiler versions, source hashes, resolved source files, and UTF-8 byte anchors when supplied by the compiler |
 
-Spider requires Python 3.10 or newer and installed Solidity compiler releases.
+Interprocedural edges are added only for source targets resolved by the
+compiler. Dynamic addresses, proxy implementations, callbacks, and unresolved
+`delegatecall` targets are retained as calls but are not linked to guessed
+implementations.
+
+## Requirements
+
+- Python 3.10 or newer
+- One or more Solidity compiler versions installed through `solc-select`
+- Graphviz only when converting DOT exports to images
+
+Install from the repository:
 
 ```bash
 git clone https://github.com/ImAno177/spider.git
 cd spider
-python -m pip install -e '.[dev]'
+python -m pip install .
+```
 
+Install the compiler versions required by the contracts you plan to process.
+These versions cover the repository fixtures:
+
+```bash
 solc-select install 0.4.25
 solc-select install 0.8.11
+solc-select install 0.8.20
 ```
 
-Install every compiler family needed by your corpus. Spider fingerprints each
-binary, rejects prerelease or mislabeled executables, and records the compiler
-and package versions in graph metadata.
+Spider fingerprints each selected compiler binary, checks its reported
+version, and stores the compiler and package versions in graph metadata.
 
-## Quick start
+## Command-line usage
 
-Extract and verify one contract:
+Extract an entry source and verify the written graph:
 
 ```bash
-spider Contract.sol out/contract.json
-spider-verify out/contract.json
+spider contracts/Vault.sol out/vault.json
+spider-verify out/vault.json
 ```
 
-Render a focused interprocedural call view:
+The `spider` command validates the graph before it writes the JSON file.
+`spider-verify` is available for validating a graph again after copying,
+transforming, or loading it from another process.
+
+### DOT views
+
+Repeat `--export MODE=PATH` to produce more than one view during the same
+extraction:
 
 ```bash
-spider Contract.sol out/contract.json \
-  --export calls=out/contract-calls.dot \
-  --export pdg=out/contract-pdg.dot
+spider contracts/Vault.sol out/vault.json \
+  --export calls=out/vault-calls.dot \
+  --export pdg=out/vault-pdg.dot
 
-dot -Tpng out/contract-calls.dot -o out/contract-calls.png
+dot -Tpng out/vault-calls.dot -o out/vault-calls.png
 ```
 
-Compile projects with import remappings:
+Supported modes are `ast`, `cfg`, `cdg`, `ddg`, `pdg`, `calls`, and `cpg`.
+Use `edge:LABEL=PATH` to export one exact edge label, for example
+`--export edge:XCFG_CALL=out/xcfg-call.dot`.
+
+### Compiler selection and import remappings
+
+By default, Spider chooses an installed compiler compatible with the source
+pragma. Pin one installed version with `--solc-version`:
+
+```bash
+spider contracts/Vault.sol out/vault.json --solc-version 0.8.20
+```
+
+Repeat `--solc-remap` when a project uses import remappings:
 
 ```bash
 spider contracts/Vault.sol out/vault.json \
@@ -73,10 +112,7 @@ spider contracts/Vault.sol out/vault.json \
   --solc-remap '@chainlink/=vendor/chainlink/'
 ```
 
-Use `--solc-version VERSION` to require one installed release instead of
-automatic pragma selection.
-
-## CLI
+The command interfaces are:
 
 ```text
 spider SOURCE OUTPUT
@@ -85,12 +121,11 @@ spider SOURCE OUTPUT
        [--solc-version VERSION]
 
 spider-verify GRAPH
-spider-batch DATASET OUTPUT [--timeout SECONDS] [--solc-remap REMAPPING]
+spider-batch DATASET OUTPUT
+             [--timeout SECONDS]
+             [--solc-remap REMAPPING]
+             [--solc-version VERSION]
 ```
-
-`--export` may be repeated. A single compilation can emit any combination of
-`ast`, `cfg`, `cdg`, `ddg`, `pdg`, `calls`, and `cpg` DOT views. Use
-`edge:LABEL=PATH` for a view containing one exact edge type.
 
 ## Python API
 
@@ -108,89 +143,64 @@ if errors:
     raise RuntimeError("\n".join(errors))
 ```
 
-## Graph model
-
-| Area | Representative labels |
-| --- | --- |
-| Declarations | `CONTRACT`, `FUNCTION`, `SOLIDITY_MODIFIER`, `STATE_VARIABLE`, `PARAMETER`, `RETURN_PARAMETER` |
-| Operations | `ASSIGNMENT`, `INDEX_ACCESS`, `MEMBER_ACCESS`, `MEMBER_NAME`, `CALL`, `RETURN` |
-| Control | `AST`, `CONTAINS`, `CFG`, `EVAL_ORDER`, `DOMINATE`, `POST_DOMINATE`, `CDG` |
-| Data | `READS`, `WRITES`, `STATE_READ`, `STATE_WRITE`, `REACHING_DEF` |
-| Access provenance | `INDEX_BASE`, `INDEX_KEY`, `MEMBER_BASE`, `MEMBER_FIELD` |
-| Calls | `INTERNAL_CALL`, `EXTERNAL_CALL`, `LOW_LEVEL_CALL`, `DELEGATECALL`, `ETHER_SEND`, `ETHER_TRANSFER` |
-| Interprocedural | `VALUE_TO_ARGUMENT`, `ARGUMENT_TO_PARAMETER`, `RETURN_VALUE`, `RETURN_TO_CALLER`, `XCFG_CALL`, `XCFG_RETURN` |
-| Effect summaries | `CALL_READS_STATE`, `CALL_WRITES_STATE` with a `transitive` flag |
-
-Each node has a stable `label`, contiguous canonical `order`, source status,
-and exact byte anchors when supplied by the compiler. `graph.node_types` and
-`graph.edge_types` are the exact vocabularies present in that graph.
-
-See [docs/SCHEMA.md](docs/SCHEMA.md) for the graph contract and
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the extraction pipeline.
-
-## Cross-contract semantics
-
-Spider emits interprocedural facts only when the compiler resolves the source
-target. A resolved call may carry:
-
-```text
-producer -> argument -> parameter
-return operation -> return parameter -> caller
-caller -> callee entry -> ... -> callee exit -> caller continuation
-caller -> directly/transitively read or written state
-```
-
-State effects are computed to a deterministic fixpoint through source-resolved
-calls and modifiers. Spider deliberately does not guess callback, proxy,
-runtime-address, or unresolved `delegatecall` targets.
+`extract` returns a Python dictionary in NetworkX node-link form. It does not
+write files or call `validate`; callers using the Python API decide when to
+validate and serialize the result.
 
 ## Batch extraction
 
-`spider-batch` recursively extracts `.sol` files into an empty output
-directory. It records one JSONL manifest plus a corpus summary containing
-success/failure status, compiler selection, runtime, and union vocabularies.
+`spider-batch` recursively processes every `.sol` file under a dataset root.
+The output directory must be empty. Each source runs in a separate subprocess
+so one compiler or Slither failure does not stop the remaining inputs.
 
 ```bash
 spider-batch dataset/ out/corpus --timeout 30
 ```
 
-Each file runs in a fresh subprocess so compiler or Slither failures remain
-isolated and visible.
+The command writes graphs under `graphs/`, one record per input to
+`manifest.jsonl`, and aggregate counts and vocabularies to `summary.json`.
+Failures remain explicit manifest records.
 
-## Verification
+## Graph contract
 
-Run the repository gates from the project root:
+Nodes use canonical IDs and a contiguous canonical `order`. Edges and nodes
+carry typed `label` values. `graph.node_types` and `graph.edge_types` list the
+labels present in that graph, while `graph.source_files` records the source-unit
+manifest and SHA-256 hashes.
+
+The full field definitions, relation semantics, and compatibility rules are in
+[docs/SCHEMA.md](docs/SCHEMA.md). The extraction stages and module boundaries
+are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Development checks
+
+Install the development dependencies, then run the repository gates:
 
 ```bash
+python -m pip install -e '.[dev]'
 python -m pytest -q
 python -m ruff check .
 python -m compileall -q spider tests scripts
 python -m pip wheel . --no-deps --wheel-dir out/wheels
 ```
 
-The regression suite includes mutation checks for source anchors, CFG and
-evaluation order, modifier overlays, calls and returns, storage access,
-argument producers, state effects, and inline-assembly coverage.
+The test suite covers source anchors, control and evaluation order, modifier
+overlays, calls and returns, storage access, argument producers, state effects,
+inline-assembly coverage, and verifier rejection of corrupted graphs.
 
-## Spider and Joern
+## Current limitations
 
-Joern provides a broader query and analysis platform: CPGQL, overlays,
-configurable taint semantics, server mode, plugins, and multiple exporters.
-Its official frontend list does not currently include Solidity. Spider focuses
-on compiler-derived Solidity semantics and emits a verified portable graph that
-can feed custom analysis or graph-learning pipelines.
+- Inline assembly and Yul are reported as opaque; their internal operations are
+  not expanded into subgraphs.
+- The analysis is not path-sensitive and does not perform symbolic execution.
+- Storage-slot aliases are not modeled.
+- Modifier and state-effect summaries are context-insensitive.
+- Runtime callbacks, proxies, and dynamic call targets are not inferred without
+  compiler-resolved source evidence.
+- Compiler, parser, and SlithIR construction failures are reported as
+  extraction errors rather than partial success.
 
-## Limitations
-
-- Inline assembly/Yul is flagged but its internal operations are opaque.
-- Analysis is not path-sensitive or symbolic execution.
-- Storage-slot aliasing is not modeled.
-- Modifier and state-effect overlays are context-insensitive.
-- Runtime callbacks, proxy implementations, and dynamic targets are not
-  inferred without compiler evidence.
-- Compiler or SlithIR construction failures remain explicit extraction errors.
-
-## Project documentation
+## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Graph schema](docs/SCHEMA.md)
@@ -201,5 +211,5 @@ can feed custom analysis or graph-learning pipelines.
 
 ## License
 
-No project license has been selected yet. Until a license is added, the source
-is publicly viewable but no additional permissions are granted.
+No project license has been selected. Unless a license is added, the source is
+publicly viewable but no additional permissions are granted.
