@@ -245,7 +245,6 @@ inline-assembly coverage, and verifier rejection of corrupted graphs.
 - [Graph schema](docs/SCHEMA.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
-- [Changelog](docs/CHANGELOG.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## License
