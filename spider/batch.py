@@ -6,8 +6,8 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from .solc import pragma_from
 from . import __version__
+from .solc import pragma_from
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
-import sys
 import hashlib
 import random
+import sys
 from copy import deepcopy
 from pathlib import Path
 

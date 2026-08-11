@@ -8,7 +8,6 @@ from typing import Any
 
 from . import __version__
 
-
 _ANCHOR_SCHEMA = "spider-source-anchor/1"
 _ATTRIBUTE_SCHEMA = "spider-attributes/1"
 _SOURCE_STATUS = {"present", "missing", "synthetic"}

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections import Counter
 import hashlib
 import json
+from collections import Counter
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,6 @@ from slither.slithir.variables import TupleVariable
 from slither.visitors.slithir import expression_to_slithir as _slither_expression
 
 from .solc import solc_candidates
-
 
 _ATTRIBUTE_SCHEMA = "spider-attributes/1"
 _ANCHOR_SCHEMA = "spider-source-anchor/1"
