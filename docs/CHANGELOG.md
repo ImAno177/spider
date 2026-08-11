@@ -5,6 +5,11 @@ All notable changes to Spider are documented here. The project follows
 
 ## Unreleased
 
+### Fixed
+
+- Restored the pixel `SPIDER` wordmark inside `logo.svg`, enlarged the README
+  logo, and removed the duplicate standalone heading.
+
 ## 0.3.0 - 2026-08-11
 
 ### Added

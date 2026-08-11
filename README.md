@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="logo.svg" alt="Spider logo" width="96" height="96">
+  <img src="logo.svg" alt="Spider logo" width="192" height="192">
 </p>
-
-<h1 align="center">Spider</h1>
 
 <p align="center">
   Solidity code property graph extraction and validation.
