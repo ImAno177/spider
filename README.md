@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./logo.svg" alt="Spider — Solidity code property graphs" width="320">
+  <img src="./logo.svg" alt="Spider Solidity CPG extractor" width="320">
 </p>
 
 <p align="center">
@@ -16,29 +16,21 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="#graph-model">Graph model</a> ·
+  <a href="#extracted-relations">Extracted relations</a> ·
   <a href="#usage">Usage</a> ·
   <a href="./docs/SCHEMA.md">Schema</a> ·
   <a href="./docs/ARCHITECTURE.md">Architecture</a>
 </p>
 
-Spider converts a Solidity source file or project directory into one typed code
-property graph (CPG). It selects an installed `solc` version compatible with the
-project pragmas, builds one Slither compilation unit, derives control- and
-data-flow relations from its AST, CFG, and SlithIR, then validates the graph
-before writing NetworkX node-link JSON.
-
-<p align="center"><code>Solidity project → solc + Slither → validated CPG JSON + focused DOT views</code></p>
-
-| Project scope | Target resolution | Reproducibility |
-| --- | --- | --- |
-| One graph spans source files, contracts, libraries, and resolved imports | Cross-contract relations require compiler-resolved targets | Canonical ordering, source hashes, compiler fingerprints, and graph validation |
+Spider compiles a Solidity file or project with a compatible installed `solc`,
+then uses Slither's AST, CFG, and SlithIR to build one typed code property graph
+(CPG). The CLI validates the graph and writes deterministic NetworkX node-link
+JSON. Optional DOT exports provide smaller views for inspection.
 
 ## Quick start
 
-Spider requires Python 3.10 or newer and at least one Solidity compiler managed
-through `solc-select`. Graphviz is optional and is needed only to render DOT
-files as images.
+Spider requires Python 3.10 or newer and a Solidity compiler managed by
+`solc-select`. Graphviz is optional.
 
 ```bash
 git clone https://github.com/ImAno177/spider.git
@@ -50,9 +42,8 @@ spider path/to/dapp out/dapp.json --export calls=out/calls.dot
 spider-verify out/dapp.json
 ```
 
-Spider selects an installed compiler compatible with every non-empty pragma in
-the input. Install additional versions when processing older projects; the test
-fixtures exercise `0.4.25`, `0.8.11`, and `0.8.20`.
+Install more compiler versions for projects with older pragmas. Spider checks
+the selected binary and records compiler and package versions in graph metadata.
 
 <details>
 <summary>Install pinned runtime dependencies explicitly</summary>
@@ -67,17 +58,7 @@ python -m pip install --no-deps .
 
 </details>
 
-Spider fingerprints each selected compiler binary, checks its reported version,
-and stores the compiler and package versions in graph metadata.
-
-## Graph model
-
-The `spider` CLI writes one validated JSON graph. `spider-batch` writes one graph
-per successful corpus item plus a provenance manifest. For a source file, the
-graph includes its compiler-resolved imports. For a project directory, Spider
-compiles all discovered `.sol` sources together so calls, arguments, returns,
-control flow, and state effects can cross file and contract boundaries. Optional
-DOT exports provide smaller views of the same graph.
+## Extracted relations
 
 ```mermaid
 flowchart LR
@@ -86,67 +67,52 @@ flowchart LR
     C --> D["Typed CPG"]
     D --> E["Graph validator"]
     E --> F["NetworkX JSON"]
-    D --> G["Focused DOT views"]
+    D --> G["DOT views"]
 ```
 
-| Area | Extracted information |
+| Area | Graph content |
 | --- | --- |
-| Declarations | Contracts, interfaces, libraries, functions, modifiers, parameters, returns, local variables, and state variables |
-| Program structure | AST containment, CFG, SlithIR evaluation order, dominance, post-dominance, and control dependence |
-| Data flow | Reads, writes, state access, operands, references, and reaching definitions |
+| Declarations | Contracts, interfaces, libraries, functions, modifiers, parameters, returns, and variables |
+| Program structure | AST containment, CFG, evaluation order, dominance, post-dominance, and control dependence |
+| Data flow | Reads, writes, operands, references, state access, and reaching definitions |
 | Storage access | Index base/key and member base/field provenance |
 | Calls | Internal, external, low-level, delegate, Ether send, and Ether transfer operations |
-| Interprocedural flow | Argument-to-parameter, return-to-caller, source-resolved cross-function and cross-contract control flow, and direct/transitive state effects |
-| Provenance | Compiler versions, source hashes, resolved source files, and UTF-8 byte anchors when supplied by the compiler |
+| Interprocedural flow | Argument/parameter and return/caller bindings, cross-contract control flow, and state effects |
+| Provenance | Compiler versions, source hashes, resolved files, and compiler-provided UTF-8 byte anchors |
 
-Interprocedural edges are added only for source targets resolved by the
-compiler. Dynamic addresses, proxy implementations, callbacks, and unresolved
-`delegatecall` targets are retained as calls but are not linked to guessed
-implementations.
+Cross-contract edges require a compiler-resolved source target. Unresolved
+dynamic calls remain call nodes without guessed callback, proxy, or
+`delegatecall` targets.
 
 ## Usage
 
-### Source file
+### Files and projects
 
-Extract one entry source and its compiler-resolved imports:
+A file input includes compiler-resolved imports. A directory input compiles its
+discovered `.sol` files into one Slither unit, which allows relations to cross
+source and contract boundaries.
 
 ```bash
+# One source file and its imports
 spider contracts/Vault.sol out/vault.json
-spider-verify out/vault.json
-```
 
-The `spider` command validates the graph before it writes the JSON file.
-`spider-verify` is available for validating a graph again after copying,
-transforming, or loading it from another process.
+# One project graph
+spider path/to/dapp out/dapp.json
 
-### Project directory
-
-Pass a directory to compile its Solidity sources into one graph:
-
-```bash
+# Pin an installed compiler and add import remappings
 spider path/to/dapp out/dapp.json \
-  --export calls=out/dapp-calls.dot
-```
-
-Spider recursively discovers `.sol` files, selects a compiler satisfying all
-non-empty project pragmas, and uses Solidity Standard JSON so original files and
-byte anchors remain intact. Generated/build directories, virtual environments,
-version-control metadata, and `node_modules` are not treated as project entry
-sources. Add dependency trees through import remappings when needed:
-
-```bash
-spider path/to/dapp out/dapp.json \
+  --solc-version 0.8.20 \
   --solc-remap '@openzeppelin/=node_modules/@openzeppelin/'
 ```
 
-Use `spider SOURCE_DIR OUTPUT.json` when one folder is one dapp. Use
-`spider-batch DATASET OUTPUT_DIR` when a corpus should produce one graph and one
-manifest record per `.sol` file.
+Directory extraction uses Solidity Standard JSON to preserve source paths and
+byte anchors. Initial source discovery skips build output, version-control
+metadata, virtual environments, generated artifacts, and `node_modules`.
+Dependencies in skipped directories can still be included through remappings.
 
-### DOT views
+### DOT exports
 
-Repeat `--export MODE=PATH` to produce more than one view during the same
-extraction:
+Repeat `--export MODE=PATH` to write several views without recompiling:
 
 ```bash
 spider contracts/Vault.sol out/vault.json \
@@ -156,42 +122,21 @@ spider contracts/Vault.sol out/vault.json \
 dot -Tpng out/vault-calls.dot -o out/vault-calls.png
 ```
 
-Supported modes are `ast`, `cfg`, `cdg`, `ddg`, `pdg`, `calls`, and `cpg`.
-Use `edge:LABEL=PATH` to export one exact edge label, for example
+Modes: `ast`, `cfg`, `cdg`, `ddg`, `pdg`, `calls`, and `cpg`.
+`edge:LABEL=PATH` exports one relation, such as
 `--export edge:XCFG_CALL=out/xcfg-call.dot`.
 
-### Compiler selection and import remappings
+### Batch extraction
 
-By default, Spider chooses an installed compiler compatible with the source
-pragma or every pragma in a project directory. Pin one installed version with
-`--solc-version`:
-
-```bash
-spider contracts/Vault.sol out/vault.json --solc-version 0.8.20
-```
-
-Repeat `--solc-remap` when a project uses import remappings:
+`spider-batch` processes each `.sol` file in an isolated subprocess. One failed
+input does not stop the corpus run, and the output directory must be empty.
 
 ```bash
-spider contracts/Vault.sol out/vault.json \
-  --solc-remap '@openzeppelin/=vendor/openzeppelin/' \
-  --solc-remap '@chainlink/=vendor/chainlink/'
+spider-batch dataset/ out/corpus --timeout 30
 ```
 
-The command interfaces are:
-
-```text
-spider SOURCE OUTPUT
-       [--export MODE=PATH]
-       [--solc-remap REMAPPING]
-       [--solc-version VERSION]
-
-spider-verify GRAPH
-spider-batch DATASET OUTPUT
-             [--timeout SECONDS]
-             [--solc-remap REMAPPING]
-             [--solc-version VERSION]
-```
+Results are written to `graphs/`, `manifest.jsonl`, and `summary.json`. Failed
+inputs remain explicit manifest records.
 
 ## Python API
 
@@ -209,39 +154,32 @@ if errors:
     raise RuntimeError("\n".join(errors))
 ```
 
-`extract` accepts either a source file or directory and returns a Python
-dictionary in NetworkX node-link form. It does not write files or call
-`validate`; callers using the Python API decide when to validate and serialize
-the result.
+`extract` accepts a file or directory and returns a NetworkX node-link
+dictionary. Python callers choose when to validate and serialize it.
 
-## Batch extraction
+## Graph output
 
-`spider-batch` recursively processes every `.sol` file under a dataset root.
-The output directory must be empty. Each source runs in a separate subprocess
-so one compiler or Slither failure does not stop the remaining inputs.
+Nodes have canonical IDs, contiguous canonical order, typed labels, and source
+anchors where Slither supplies them. Graph metadata records the node/edge
+vocabularies, source manifest, SHA-256 hashes, compiler fingerprint, and package
+versions.
 
-```bash
-spider-batch dataset/ out/corpus --timeout 30
-```
+See the [graph schema](docs/SCHEMA.md) for fields, relation semantics, and
+compatibility rules. The [architecture guide](docs/ARCHITECTURE.md) explains
+compilation, extraction, canonicalization, and validation.
 
-The command writes graphs under `graphs/`, one record per input to
-`manifest.jsonl`, and aggregate counts and vocabularies to `summary.json`.
-Failures remain explicit manifest records.
+## Limitations
 
-## Graph contract
+- Inline assembly and Yul are opaque nodes; Spider does not expand their
+  internal operations.
+- The analysis is not path-sensitive and does not perform symbolic execution.
+- Storage-slot aliases are not modeled.
+- Modifier and state-effect summaries are context-insensitive.
+- Runtime callbacks, proxies, and dynamic targets are not inferred without a
+  compiler-resolved source target.
+- Compiler, parser, and SlithIR failures stop extraction for the affected input.
 
-Nodes use canonical IDs and a contiguous canonical `order`. Edges and nodes
-carry typed `label` values. `graph.node_types` and `graph.edge_types` list the
-labels present in that graph, while `graph.source_files` records the source-unit
-manifest and SHA-256 hashes.
-
-The full field definitions, relation semantics, and compatibility rules are in
-[docs/SCHEMA.md](docs/SCHEMA.md). The extraction stages and module boundaries
-are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## Development checks
-
-Install the development dependencies, then run the repository gates:
+## Development
 
 ```bash
 python -m pip install -e '.[dev]'
@@ -251,34 +189,11 @@ python -m compileall -q spider tests scripts
 python -m pip wheel . --no-deps --wheel-dir out/wheels
 ```
 
-`pyproject.toml` also sets `testpaths = ["tests"]`; CI names the folder explicitly
-and prints the ten slowest tests. The workflow is intentionally triggered only
-by changes under `spider/**`, but once triggered it runs the complete test suite.
-The suite covers source anchors, control and evaluation order, modifier overlays,
-calls and returns, storage access, argument producers, state effects,
-inline-assembly coverage, and verifier rejection of corrupted graphs.
-
-## Current limitations
-
-- Inline assembly and Yul are reported as opaque; their internal operations are
-  not expanded into subgraphs.
-- The analysis is not path-sensitive and does not perform symbolic execution.
-- Storage-slot aliases are not modeled.
-- Modifier and state-effect summaries are context-insensitive.
-- Runtime callbacks, proxies, and dynamic call targets are not inferred without
-  compiler-resolved source evidence.
-- Compiler, parser, and SlithIR construction failures are reported as
-  extraction errors rather than partial success.
-
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [Graph schema](docs/SCHEMA.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [Roadmap](docs/ROADMAP.md)
+Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Security reports
+follow [SECURITY.md](SECURITY.md). Planned work is tracked in the
+[roadmap](docs/ROADMAP.md).
 
 ## License
 
-No project license has been selected. Unless a license is added, the source is
-publicly viewable but no additional permissions are granted.
+No project license has been selected. The source is publicly viewable, but no
+additional permissions are granted unless a license is added.
