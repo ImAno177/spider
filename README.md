@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Compiler-backed Solidity code property graphs.</strong><br>
+  <strong>Solidity code property graph extractor.</strong><br>
   Whole-project extraction, cross-contract flow, deterministic output, and strict validation.
 </p>
 
