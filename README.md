@@ -1,9 +1,16 @@
 <p align="center">
-  <img src="logo.svg" alt="Spider logo" width="192" height="192">
+  <img src="./logo.svg" alt="Spider — Solidity code property graphs" width="320">
 </p>
 
 <p align="center">
-  Solidity code property graph extraction and validation.
+  <strong>Compiler-backed Solidity code property graphs.</strong><br>
+  Whole-project extraction, cross-contract flow, deterministic output, and strict validation.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ImAno177/spider/actions/workflows/ci.yml"><img src="https://github.com/ImAno177/spider/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10 or newer">
+  <img src="https://img.shields.io/badge/CPG-spider--cpg%2F1.0-111111" alt="CPG schema spider-cpg/1.0">
 </p>
 
 Spider converts a Solidity source file or project directory into one typed code
