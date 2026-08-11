@@ -28,10 +28,6 @@ project pragmas, builds one Slither compilation unit, derives control- and
 data-flow relations from its AST, CFG, and SlithIR, then validates the graph
 before writing NetworkX node-link JSON.
 
-The current graph format is `spider-cpg/1.0`. Spider extracts program structure;
-it is not a vulnerability scanner, symbolic executor, or runtime target
-resolver.
-
 <p align="center"><code>Solidity project → solc + Slither → validated CPG JSON + focused DOT views</code></p>
 
 | Project scope | Target resolution | Reproducibility |
