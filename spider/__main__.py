@@ -22,7 +22,7 @@ def _export_spec(value: str) -> tuple[str, Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="spider", description="Extract a compiler-backed Solidity code property graph.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("source", type=Path)
+    parser.add_argument("source", type=Path, help="Solidity entry file or plain project directory")
     parser.add_argument("output", type=Path, help="NetworkX node-link JSON output")
     parser.add_argument("--export", action="append", type=_export_spec, metavar="MODE=PATH", help="Export a DOT view; repeat for multiple modes or use edge:LABEL=PATH")
     parser.add_argument("--solc-remap", action="append", help="Solidity import remapping; repeat when a project omits vendored dependencies")

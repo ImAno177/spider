@@ -88,6 +88,47 @@ def test_extract() -> None:
     effect["target"] = next(node["id"] for node in broken_cross_effect["nodes"] if node["label"] == "STATE_VARIABLE" and node["contract_name"] == "Vault")
     assert "CALL_WRITES_STATE does not match source-resolved effects" in validate(broken_cross_effect)
 
+    directory = Path(__file__).parent / "fixtures" / "project"
+    directory_graph = extract(directory)
+    assert not validate(directory_graph)
+    assert directory_graph["graph"]["input_kind"] == "directory"
+    assert directory_graph["graph"]["scope"] == "project"
+    assert directory_graph["graph"]["source"] == directory.resolve().as_posix()
+    assert directory_graph["graph"]["input_sources"] == sorted(directory_graph["graph"]["input_sources"])
+    assert len(directory_graph["graph"]["input_sources"]) == 4
+    assert len(directory_graph["graph"]["source_files"]) == 4
+    directory_nodes = {node["id"]: node for node in directory_graph["nodes"]}
+    assert {"Ledger", "Vault", "Standalone"} <= {node["name"] for node in directory_nodes.values() if node["label"] == "CONTRACT"}
+    assert any(
+        edge["label"] == "EXTERNAL_CALL"
+        and directory_nodes[edge["source"]].get("contract_name") == "Vault"
+        and directory_nodes[edge["target"]].get("contract_name") == "Ledger"
+        for edge in directory_graph["links"]
+    )
+    assert any(edge["label"] == "XCFG_CALL" for edge in directory_graph["links"])
+    assert any(
+        edge["label"] == "LIBRARY_CALL"
+        and directory_nodes[edge["source"]].get("contract_name") == "UsesStaticLibrary"
+        and directory_nodes[edge["target"]].get("contract_name") == "StaticLibrary"
+        for edge in directory_graph["links"]
+    )
+    assert directory_graph == extract(directory)
+    broken_input = deepcopy(directory_graph)
+    broken_input["graph"]["input_sources"].reverse()
+    assert "invalid input source list" in validate(broken_input)
+
+    duplicate_graph = extract(Path(__file__).parent / "fixtures" / "duplicate")
+    assert not validate(duplicate_graph)
+    shared = [node for node in duplicate_graph["nodes"] if node["label"] in {"CONTRACT", "INTERFACE"} and node["name"] == "Shared"]
+    assert len(shared) == 2
+    assert {node["has_inline_assembly"] for node in shared} == {False, True}
+
+    remapped_graph = extract(Path(__file__).parent / "fixtures" / "remapped_project", solc_remaps=["@dep/=node_modules/@dep/"])
+    assert not validate(remapped_graph)
+    assert len(remapped_graph["graph"]["input_sources"]) == 1
+    assert len(remapped_graph["graph"]["source_files"]) == 2
+    assert {node["name"] for node in remapped_graph["nodes"] if node["label"] in {"CONTRACT", "LIBRARY"}} == {"App", "Math"}
+
     windows_path = extract(Path(__file__).parent / "fixtures" / "WindowsPath.sol")
     assert windows_path["graph"]["solc_version"] == "0.8.11"
     assert not validate(windows_path)

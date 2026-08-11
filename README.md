@@ -8,10 +8,10 @@
   Solidity code property graph extraction and validation.
 </p>
 
-Spider converts a Solidity entry source and its compiler-resolved imports into
-a typed code property graph (CPG). It selects an installed `solc` version that
-satisfies the source pragma, builds the project with Slither, derives control-
-and data-flow relations from its AST, CFG, and SlithIR, then validates the graph
+Spider converts a Solidity source file or project directory into one typed code
+property graph (CPG). It selects an installed `solc` version compatible with the
+project pragmas, builds one Slither compilation unit, derives control- and
+data-flow relations from its AST, CFG, and SlithIR, then validates the graph
 before writing NetworkX node-link JSON.
 
 The current graph format is `spider-cpg/1.0`. Spider extracts program structure;
@@ -20,9 +20,12 @@ resolver.
 
 ## Output
 
-Every successful command-line extraction writes one validated JSON graph. The
-graph covers the entry source and every imported source unit resolved during
-compilation. Optional DOT exports provide smaller views of the same graph.
+The `spider` CLI writes one validated JSON graph. `spider-batch` writes one graph
+per successful corpus item plus a provenance manifest. For a source file, the
+graph includes its compiler-resolved imports. For a project directory, Spider
+compiles all discovered `.sol` sources together so calls, arguments, returns,
+control flow, and state effects can cross file and contract boundaries. Optional
+DOT exports provide smaller views of the same graph.
 
 | Area | Extracted information |
 | --- | --- |
@@ -53,6 +56,18 @@ cd spider
 python -m pip install .
 ```
 
+This command installs Spider and the runtime dependencies pinned in
+`pyproject.toml`. To download those dependencies explicitly before installing
+Spider, run:
+
+```bash
+python -m pip install \
+  "crytic-compile==0.3.11" \
+  "slither-analyzer==0.11.5" \
+  "solc-select==1.2.0"
+python -m pip install --no-deps .
+```
+
 Install the compiler versions required by the contracts you plan to process.
 These versions cover the repository fixtures:
 
@@ -78,6 +93,30 @@ The `spider` command validates the graph before it writes the JSON file.
 `spider-verify` is available for validating a graph again after copying,
 transforming, or loading it from another process.
 
+### Whole-project extraction
+
+Pass a directory to compile its Solidity sources into one graph:
+
+```bash
+spider path/to/dapp out/dapp.json \
+  --export calls=out/dapp-calls.dot
+```
+
+Spider recursively discovers `.sol` files, selects a compiler satisfying all
+non-empty project pragmas, and uses Solidity Standard JSON so original files and
+byte anchors remain intact. Generated/build directories, virtual environments,
+version-control metadata, and `node_modules` are not treated as project entry
+sources. Add dependency trees through import remappings when needed:
+
+```bash
+spider path/to/dapp out/dapp.json \
+  --solc-remap '@openzeppelin/=node_modules/@openzeppelin/'
+```
+
+Use `spider SOURCE_DIR OUTPUT.json` when one folder is one dapp. Use
+`spider-batch DATASET OUTPUT_DIR` when a corpus should produce one graph and one
+manifest record per `.sol` file.
+
 ### DOT views
 
 Repeat `--export MODE=PATH` to produce more than one view during the same
@@ -98,7 +137,8 @@ Use `edge:LABEL=PATH` to export one exact edge label, for example
 ### Compiler selection and import remappings
 
 By default, Spider chooses an installed compiler compatible with the source
-pragma. Pin one installed version with `--solc-version`:
+pragma or every pragma in a project directory. Pin one installed version with
+`--solc-version`:
 
 ```bash
 spider contracts/Vault.sol out/vault.json --solc-version 0.8.20
@@ -143,9 +183,10 @@ if errors:
     raise RuntimeError("\n".join(errors))
 ```
 
-`extract` returns a Python dictionary in NetworkX node-link form. It does not
-write files or call `validate`; callers using the Python API decide when to
-validate and serialize the result.
+`extract` accepts either a source file or directory and returns a Python
+dictionary in NetworkX node-link form. It does not write files or call
+`validate`; callers using the Python API decide when to validate and serialize
+the result.
 
 ## Batch extraction
 
@@ -206,8 +247,8 @@ inline-assembly coverage, and verifier rejection of corrupted graphs.
 - [Graph schema](docs/SCHEMA.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
-- [Changelog](CHANGELOG.md)
-- [Roadmap](ROADMAP.md)
+- [Changelog](docs/CHANGELOG.md)
+- [Roadmap](docs/ROADMAP.md)
 
 ## License
 

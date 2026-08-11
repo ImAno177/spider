@@ -25,8 +25,10 @@ allowed.
 | --- | --- |
 | `format` | Graph contract identifier, currently `spider-cpg/1.0`. |
 | `tool` | Extractor name, `Spider`. |
-| `source` | Resolved absolute path of the entry source. |
-| `scope` | `file` for one resolved source unit or `project` for multiple source units. |
+| `source` | Resolved absolute path of the input file or project directory. |
+| `input_kind` | `file` or `directory`. |
+| `input_sources` | Sorted canonical paths compiled directly from the supplied input. |
+| `scope` | `file` for a single-source file extraction or `project` for imported/multi-source and directory extraction. |
 | `node_type_key`, `edge_type_key` | Field containing the semantic type of each node or edge; both are `label`. |
 | `position_key` | Field containing canonical node position, `order`. |
 | `schema` | Human-readable graph schema name. |

@@ -13,6 +13,7 @@ These instructions apply to the entire Spider repository.
 | `spider/batch.py` | Isolated corpus extraction. |
 | `tests/test_extract.py` | Semantic and mutation regression gate. |
 | `docs/SCHEMA.md` | Public graph contract. |
+| `docs/CHANGELOG.md` | Release history. |
 
 Keep extractor and verifier semantics synchronized. Executable code overrides
 prose only after the schema documentation and tests are updated.
@@ -71,5 +72,5 @@ handling, graph semantics, imports, or interprocedural behavior.
 
 - Do not commit `out/`, build products, wheels, caches, virtual environments,
   corpus graphs, or generated review artifacts.
-- Keep `README.md`, `docs/`, and `CHANGELOG.md` aligned with public behavior.
+- Keep `README.md` and `docs/` aligned with public behavior.
 - Do not select or change the project license without owner approval.

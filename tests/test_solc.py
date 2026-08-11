@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import spider.solc as solc
-from spider.solc import compatible_version, compatible_versions, pragma_from, resolve_solc
+from spider.solc import compatible_project_versions, compatible_version, compatible_versions, pragma_from, resolve_solc, solidity_sources
 
 
 def test_solc_resolution() -> None:
@@ -16,6 +16,7 @@ def test_solc_resolution() -> None:
     assert compatible_version("0.7.6", versions) is None
     broad = [(0, 4, 18), (0, 4, 26), (0, 5, 17), (0, 8, 25)]
     assert compatible_versions(">=0.4.18", broad) == ["0.4.26", "0.4.18", "0.5.17", "0.8.25"]
+    assert compatible_project_versions(["^0.8.10", ">=0.8.20 <0.9.0"], versions) == ["0.8.20"]
     selected, binary = resolve_solc(Path(__file__).parent / "fixtures" / "Bank.sol")
     assert selected and binary.is_file()
 
@@ -30,6 +31,22 @@ def test_pragma_ignores_comments(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert pragma_from(source) == "^0.5.17"
+
+
+def test_project_source_discovery(tmp_path: Path) -> None:
+    (tmp_path / "contracts").mkdir()
+    (tmp_path / "contracts" / "A.sol").write_text("pragma solidity 0.8.20; contract A {}", encoding="utf-8")
+    (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+    (tmp_path / "node_modules" / "pkg" / "Ignored.sol").write_text("contract Ignored {}", encoding="utf-8")
+    assert solidity_sources(tmp_path) == [(tmp_path / "contracts" / "A.sol").resolve()]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    try:
+        solidity_sources(empty)
+    except ValueError as error:
+        assert "No Solidity sources" in str(error)
+    else:
+        raise AssertionError("empty project directory was accepted")
 
 
 def test_compiler_fingerprint_rejects_prerelease_and_tracks_binary(tmp_path: Path, monkeypatch) -> None:
@@ -82,6 +99,17 @@ def test_cli_and_batch_record_actual_compiler(tmp_path: Path) -> None:
     assert calls_dot.is_file() and "LOW_LEVEL_CALL" in calls_dot.read_text(encoding="utf-8")
     assert xcfg_dot.is_file()
 
+    project_graph_path = tmp_path / "project.json"
+    subprocess.run(
+        [sys.executable, "-m", "spider", str(fixtures / "project"), str(project_graph_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    project_graph = json.loads(project_graph_path.read_text(encoding="utf-8"))
+    assert project_graph["graph"]["input_kind"] == "directory"
+    assert "XCFG_CALL" in project_graph["graph"]["edge_types"]
+
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     shutil.copy(fixtures / "Control.sol", corpus / "Control.sol")
@@ -97,7 +125,7 @@ def test_cli_and_batch_record_actual_compiler(tmp_path: Path) -> None:
     summary = json.loads((review / "summary.json").read_text(encoding="utf-8"))
     assert record["status"] == "ok" and record["selected_solc"] == graph["graph"]["solc_version"]
     assert summary["ok"] == 1 and summary["error"] == 0
-    assert summary["extractor_version"] == "0.2.0"
+    assert summary["extractor_version"] == "0.3.0"
     assert summary["slither_version"] == "0.11.5"
 
     timed_review = tmp_path / "timed-review"

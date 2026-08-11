@@ -143,6 +143,19 @@ def validate(graph: dict[str, Any]) -> list[str]:
     metadata = graph.get("graph", {})
     if metadata.get("format") != "spider-cpg/1.0":
         errors.append("unexpected graph format")
+    if "input_kind" in metadata or "input_sources" in metadata:
+        input_kind = metadata.get("input_kind")
+        input_sources = metadata.get("input_sources")
+        if input_kind not in {"file", "directory"}:
+            errors.append("invalid input kind")
+        if not isinstance(input_sources, list) or not all(isinstance(source, str) and source for source in input_sources):
+            errors.append("invalid input source list")
+        elif input_sources != sorted(set(input_sources)):
+            errors.append("invalid input source list")
+        elif input_kind == "file" and (len(input_sources) != 1 or input_sources[0] != metadata.get("source")):
+            errors.append("file input metadata does not match source")
+        elif input_kind == "directory" and metadata.get("scope") != "project":
+            errors.append("directory input must have project scope")
     if len(nodes) != len(graph.get("nodes", [])):
         errors.append("node IDs are not unique")
     errors.extend(_validate_extensions(nodes, metadata))
@@ -512,7 +525,11 @@ def validate(graph: dict[str, Any]) -> list[str]:
     if any(not isinstance(nodes[function].get("has_inline_assembly"), bool) or nodes[function]["has_inline_assembly"] != (function in assembly_functions) for function in function_nodes):
         errors.append("invalid function inline assembly coverage")
     contract_nodes = {node_id: node for node_id, node in nodes.items() if node["label"] in {"CONTRACT", "INTERFACE", "LIBRARY", "ABSTRACT"}}
-    if any(not isinstance(contract.get("has_inline_assembly"), bool) or contract["has_inline_assembly"] != any(nodes[function].get("contract_name") == contract.get("contract_name") and function in assembly_functions for function in function_nodes) for contract in contract_nodes.values()):
+    contract_functions = {
+        contract_id: {edge["target"] for edge in outgoing.get(("CONTAINS", contract_id), []) if edge["target"] in function_nodes}
+        for contract_id in contract_nodes
+    }
+    if any(not isinstance(contract.get("has_inline_assembly"), bool) or contract["has_inline_assembly"] != bool(contract_functions[contract_id] & assembly_functions) for contract_id, contract in contract_nodes.items()):
         errors.append("invalid contract inline assembly coverage")
     if metadata.get("has_inline_assembly") != any(assembly_functions):
         errors.append("invalid graph inline assembly coverage")

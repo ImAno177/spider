@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
+    paths:
+      - "spider/**"
   pull_request:
+    paths:
+      - "spider/**"
 
 permissions:
   contents: read

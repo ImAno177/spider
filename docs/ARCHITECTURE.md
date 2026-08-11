@@ -4,7 +4,7 @@ Spider has five stages: compiler selection, project construction, graph
 extraction, canonicalization, and validation.
 
 ```text
-Solidity entry source
+Solidity source file or project directory
   -> pragma parsing and compiler fingerprinting
   -> solc and Slither project construction
   -> declarations, source anchors, CFG blocks, and SlithIR operations
@@ -26,9 +26,10 @@ Solidity entry source
 
 ## Compiler selection
 
-Spider reads the entry source pragma and inspects installed release compilers.
-Every candidate executable is identified by SHA-256 and checked with
-`--version`; prerelease and mislabeled binaries are rejected.
+Spider reads the entry-source pragma or all non-empty pragmas in a project
+directory, then inspects installed release compilers. Every candidate executable
+is identified by SHA-256 and checked with `--version`; prerelease and mislabeled
+binaries are rejected.
 
 Compatible candidates are tried in deterministic order. For pre-1.0 Solidity,
 Spider tries the earliest compatible minor family first and the newest patch
@@ -37,10 +38,27 @@ candidate failure is raised.
 
 ## Project construction
 
-Slither compiles the entry source and resolves its imports. Spider creates one
-source manifest entry for every resolved source unit and records raw-byte
-SHA-256, byte length, encoding, and canonical path. Graph scope is `project`
-when nodes originate from more than one source unit and `file` otherwise.
+For a file input, Slither compiles that entry source and resolves its imports.
+For a directory input, Spider recursively discovers `.sol` files and submits
+their original contents to one Solidity Standard JSON compilation. The selected
+compiler must satisfy every discovered non-empty pragma. Remapping targets are
+added to the same input when they resolve to local directories.
+
+Directory extraction does not flatten source text. Flattening runs after a
+project has already compiled and rewrites declarations into generated source
+units, which would replace the original file identities and byte anchors. A
+Standard JSON compilation provides one cross-contract Slither unit while
+preserving the original source paths.
+
+Version-control directories, build outputs, caches, virtual environments,
+`node_modules`, and generated artifact directories are excluded from initial
+directory discovery. Dependencies under those paths can be supplied through
+`--solc-remap`.
+
+Spider creates one source manifest entry for every input or resolved source
+unit and records raw-byte SHA-256, byte length, encoding, and canonical path.
+Directory inputs always have `project` scope. File inputs have `project` scope
+when compilation resolves more than one source unit and `file` otherwise.
 
 Declarations are registered before function bodies. This lets references from
 imports and inheritance resolve through canonical source identity rather than

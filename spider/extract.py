@@ -7,13 +7,15 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from crytic_compile import CryticCompile
+from crytic_compile.platform.solc_standard_json import SolcStandardJson
 from slither.slither import Slither
 from slither.slithir import convert as _slither_convert
 from slither.slithir.operations import Assignment, HighLevelCall
 from slither.slithir.variables import TupleVariable
 from slither.visitors.slithir import expression_to_slithir as _slither_expression
 
-from .solc import solc_candidates
+from .solc import solc_candidates, solidity_sources
 
 _ATTRIBUTE_SCHEMA = "spider-attributes/1"
 _ANCHOR_SCHEMA = "spider-source-anchor/1"
@@ -48,8 +50,9 @@ _propagate_types = _slither_convert.propagate_types
 
 
 def _propagate_single_type(ir: Any, node: Any) -> Any:
-    if isinstance(ir, HighLevelCall) and ir.destination is not None and isinstance(ir.destination.type, list) and len(ir.destination.type) == 1:
-        ir.destination.set_type(ir.destination.type[0])
+    destination_type = getattr(getattr(ir, "destination", None), "type", None)
+    if isinstance(ir, HighLevelCall) and isinstance(destination_type, list) and len(destination_type) == 1:
+        ir.destination.set_type(destination_type[0])
     return _propagate_types(ir, node)
 
 
@@ -397,7 +400,7 @@ class _Graph:
             "graph": {
                 "format": "spider-cpg/1.0",
                 "tool": "Spider",
-                "source": str(self.source),
+                "source": _canonical_path(self.source),
                 "scope": "file",
                 "node_type_key": "label",
                 "edge_type_key": "label",
@@ -765,12 +768,58 @@ def _add_return_checks(graph: _Graph) -> None:
                     graph.edge(call, revert, "CHECKS_RETURN", via="branch", branch=branch["label"])
 
 
+def _project_compilation(
+    project: Path,
+    source_files: list[Path],
+    solc: Path,
+    solc_args: str,
+    solc_remaps: list[str] | None,
+) -> Slither:
+    sources = {
+        source.relative_to(project).as_posix(): {"content": source.read_text(encoding="utf-8")}
+        for source in source_files
+    }
+    remappings: list[str] = []
+    for remapping in solc_remaps or []:
+        prefix, separator, target = remapping.rpartition("=")
+        if not separator:
+            remappings.append(remapping)
+            continue
+        target_path = Path(target)
+        if not target_path.is_absolute():
+            target_path = project / target_path
+        if not target_path.is_dir():
+            remappings.append(remapping)
+            continue
+        target_path = target_path.resolve()
+        try:
+            normalized_target = target_path.relative_to(project).as_posix().rstrip("/") + "/"
+        except ValueError:
+            normalized_target = target_path.as_posix().rstrip("/") + "/"
+        remappings.append(f"{prefix}={normalized_target}")
+        for dependency in solidity_sources(target_path):
+            key = normalized_target + dependency.relative_to(target_path).as_posix()
+            content = dependency.read_text(encoding="utf-8")
+            previous = sources.get(key)
+            if previous is not None and previous["content"] != content:
+                raise ValueError(f"remapping source resolves to conflicting contents: {key}")
+            sources[key] = {"content": content}
+
+    standard_json = SolcStandardJson({"language": "Solidity", "sources": sources, "settings": {"remappings": remappings}})
+    if "--optimize" in solc_args:
+        standard_json.to_dict()["settings"]["optimizer"] = {"enabled": True}
+    if "--via-ir" in solc_args:
+        standard_json.to_dict()["settings"]["viaIR"] = True
+    compilation = CryticCompile(standard_json, solc=str(solc), solc_args=solc_args, solc_working_dir=str(project))
+    return Slither(compilation)
+
+
 def extract(path: str | Path, solc_remaps: list[str] | None = None, solc_version: str | None = None) -> dict[str, Any]:
-    """Return a CPG for a Solidity entry file and every source resolved through its imports."""
+    """Return one CPG for a Solidity entry file or plain project directory."""
     path = Path(path).resolve()
-    if path.is_dir():
-        raise ValueError("Pass a Solidity entry file; Slither resolves its project imports during compilation.")
-    sources = {str(path): path.read_bytes()}
+    project_input = path.is_dir()
+    source_files = solidity_sources(path)
+    sources = {str(source): source.read_bytes() for source in source_files}
     last_error: BaseException | None = None
     slither: Slither | None = None
     selected_solc_args = ""
@@ -782,10 +831,13 @@ def extract(path: str | Path, solc_remaps: list[str] | None = None, solc_version
             attempts.append("--via-ir --optimize")
         for selected_solc_args in attempts:
             try:
-                # solc 0.8.11 on Windows drops the drive prefix from absolute
-                # source-unit names. Compile a drive-relative target while
-                # preserving its directory hierarchy for relative imports.
-                slither = Slither(compiler_target, solc_remaps=solc_remaps, solc=str(solc), solc_args=selected_solc_args, **compiler_working_dir)
+                if project_input:
+                    slither = _project_compilation(path, source_files, solc, selected_solc_args, solc_remaps)
+                else:
+                    # solc 0.8.11 on Windows drops the drive prefix from absolute
+                    # source-unit names. Compile a drive-relative target while
+                    # preserving its directory hierarchy for relative imports.
+                    slither = Slither(compiler_target, solc_remaps=solc_remaps, solc=str(solc), solc_args=selected_solc_args, **compiler_working_dir)
                 break
             except (Exception, SystemExit) as error:
                 last_error = error
@@ -1296,7 +1348,9 @@ def extract(path: str | Path, solc_remaps: list[str] | None = None, solc_version
     data = graph.data()
     data["graph"]["solc_version"] = selected_solc
     data["graph"]["solc_args"] = selected_solc_args
-    data["graph"]["scope"] = "project" if len({node["file"] for node in data["nodes"] if node["file"]}) > 1 else "file"
+    data["graph"]["input_kind"] = "directory" if project_input else "file"
+    data["graph"]["input_sources"] = [_canonical_path(source) for source in source_files]
+    data["graph"]["scope"] = "project" if project_input or len({node["file"] for node in data["nodes"] if node["file"]}) > 1 else "file"
     data["graph"]["has_inline_assembly"] = any(node.get("has_inline_assembly") for node in data["nodes"] if node["label"] in {"CONTRACT", "INTERFACE", "LIBRARY", "ABSTRACT"})
     data["graph"]["compiler_semantic_regime"] = "checked-arithmetic-default" if tuple(map(int, selected_solc.split("."))) >= (0, 8) else "unchecked-arithmetic-default"
     data["graph"]["unsupported_semantics"] = ["INLINE_ASSEMBLY_OPAQUE"] if data["graph"]["has_inline_assembly"] else []

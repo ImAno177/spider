@@ -1,10 +1,10 @@
 [project]
 name = "spider-solidity-cpg"
-version = "0.2.0"
-description = "Compiler-backed Solidity code property graph extractor and verifier"
+version = "0.3.0"
+description = "Solidity project code property graph extractor and verifier"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["slither-analyzer==0.11.5", "solc-select==1.2.0"]
+dependencies = ["crytic-compile==0.3.11", "slither-analyzer==0.11.5", "solc-select==1.2.0"]
 keywords = ["solidity", "cpg", "program-analysis", "smart-contracts", "slither"]
 classifiers = [
   "Development Status :: 4 - Beta",

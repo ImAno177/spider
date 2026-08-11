@@ -7,6 +7,8 @@ inferred relations separate from compiler-resolved facts.
 
 - Add query helpers for common graph traversals.
 - Publish a machine-readable schema reference and version compatibility table.
+- Extend directory extraction to framework-managed build configurations while
+  preserving the plain Standard JSON path.
 - Benchmark extraction and validation on larger multi-file projects.
 - Expand compiler and fixture coverage for custom errors, user-defined value
   types, and recent Solidity syntax.

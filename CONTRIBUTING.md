@@ -40,8 +40,8 @@ cross-contract behavior, also run `spider-batch` on a representative corpus.
 - Keep source-resolved facts separate from heuristics. Never encode a guessed
   callback, proxy implementation, or runtime target as a fact.
 - Preserve source spans and deterministic ordering.
-- Update `README.md`, `docs/SCHEMA.md`, and `CHANGELOG.md` when the public graph
-  or CLI changes.
+- Update `README.md`, `docs/SCHEMA.md`, and `docs/CHANGELOG.md` when the public
+  graph or CLI changes.
 - Do not weaken validation to accept output the extractor cannot justify.
 - Keep generated graphs, wheels, caches, and corpus outputs out of commits.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 from functools import lru_cache
@@ -11,6 +12,7 @@ from solc_select.solc_select import artifact_path, installed_versions
 PRAGMA_RE = re.compile(r"\bpragma\s+solidity\s*([^;]+);", re.I)
 TOKEN_RE = re.compile(r"(\^|>=|<=|>|<|=)?\s*(\d+)\s*\.\s*(\d+)(?:\s*\.\s*(\d+))?")
 VERSION_RE = re.compile(r"\bVersion:\s*(\d+\.\d+\.\d+)(\S*)")
+_IGNORED_PROJECT_DIRS = {".git", ".hg", ".svn", ".venv", "artifacts", "build", "cache", "node_modules", "out", "venv"}
 
 
 def _without_comments(source: str) -> str:
@@ -59,6 +61,22 @@ def pragma_from(path: str | Path) -> str:
     return match.group(1).strip() if match else ""
 
 
+def solidity_sources(path: str | Path) -> list[Path]:
+    """Return deterministic Solidity inputs for a file or plain project directory."""
+    source = Path(path).resolve()
+    if source.is_file():
+        return [source]
+    if not source.is_dir():
+        raise FileNotFoundError(source)
+    files: list[Path] = []
+    for root, directories, filenames in os.walk(source):
+        directories[:] = sorted(name for name in directories if name not in _IGNORED_PROJECT_DIRS)
+        files.extend(Path(root, name).resolve() for name in sorted(filenames) if Path(name).suffix.lower() == ".sol")
+    if not files:
+        raise ValueError(f"No Solidity sources found under project directory: {source}")
+    return sorted(files, key=lambda item: item.as_posix())
+
+
 def _matches(version: tuple[int, int, int], expression: str) -> bool:
     position = 0
     found = False
@@ -96,6 +114,18 @@ def compatible_versions(expression: str, versions: list[tuple[int, int, int]]) -
     return [".".join(map(str, version)) for version in matches]
 
 
+def compatible_project_versions(expressions: list[str], versions: list[tuple[int, int, int]]) -> list[str]:
+    """Return versions satisfying every non-empty pragma in one compilation unit."""
+    constraints = [expression for expression in expressions if expression]
+    matches = [
+        version
+        for version in versions
+        if all(any(_matches(version, branch.strip()) for branch in expression.split("||")) for expression in constraints)
+    ]
+    matches.sort(key=lambda version: (version[0], version[1], -version[2]))
+    return [".".join(map(str, version)) for version in matches]
+
+
 @lru_cache(maxsize=None)
 def compiler_fingerprint(requested: str) -> dict[str, str | bool]:
     binary = artifact_path(requested)
@@ -127,11 +157,13 @@ def resolve_solc(path: str | Path, version: str | None = None) -> tuple[str, Pat
 
 
 def solc_candidates(path: str | Path, version: str | None = None) -> list[tuple[str, Path]]:
-    expression = pragma_from(path)
+    source_files = solidity_sources(path)
+    expressions = [pragma_from(source) for source in source_files]
+    constraints = sorted(set(expression for expression in expressions if expression))
     versions = installed_solc_versions() if version is None else []
-    selected = [version] if version else (compatible_versions(expression, versions) if expression else [".".join(map(str, item)) for item in reversed(versions)])
+    selected = [version] if version else (compatible_project_versions(constraints, versions) if constraints else [".".join(map(str, item)) for item in reversed(versions)])
     if not selected:
-        detail = f"pragma {expression!r}" if expression else "missing pragma"
+        detail = (f"project pragmas {constraints!r}" if len(source_files) > 1 else f"pragma {constraints[0]!r}") if constraints else "missing pragma"
         raise ValueError(f"No installed solc satisfies {detail}")
     candidates: list[tuple[str, Path]] = []
     for item in selected:
