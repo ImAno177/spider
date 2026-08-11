@@ -6,7 +6,9 @@ These instructions apply to the entire Spider repository.
 
 | Path | Responsibility |
 | --- | --- |
-| `spider/extract.py` | Build `spider-cpg/1.0` from Slither AST, CFG, and SlithIR. |
+| `spider/extract.py` | Public extraction API, Slither compatibility, and project compilation. |
+| `spider/_builder.py` | Build CPG semantics from a compiled Slither unit. |
+| `spider/_graph.py` | Graph primitives, metadata, canonicalization, and DOT rendering. |
 | `spider/verify.py` | Recompute and validate graph invariants. |
 | `spider/solc.py` | Select and fingerprint compatible Solidity compilers. |
 | `spider/__main__.py` | `spider` extraction and multi-view export CLI. |

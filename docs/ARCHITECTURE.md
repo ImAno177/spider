@@ -19,7 +19,9 @@ Solidity source file or project directory
 | Module | Responsibility |
 | --- | --- |
 | `spider/solc.py` | Parse pragmas, fingerprint installed compilers, and choose compatible candidates in a deterministic order. |
-| `spider/extract.py` | Construct the typed graph and serialize DOT views. |
+| `spider/extract.py` | Apply Slither compatibility fixes, compile the input, and expose the public extraction API. |
+| `spider/_builder.py` | Construct declarations, control/data flow, calls, returns, modifiers, and state-effect relations. |
+| `spider/_graph.py` | Store graph elements, attach source metadata, canonicalize output, and render DOT views. |
 | `spider/verify.py` | Recompute and validate source, structure, control-flow, data-flow, call, return, modifier, and state-effect invariants. |
 | `spider/__main__.py` | Extract and validate one project, write JSON, and process repeated DOT exports. |
 | `spider/batch.py` | Run isolated corpus extractions and write JSONL provenance and aggregate results. |

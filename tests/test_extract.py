@@ -7,7 +7,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from spider import extract
-from spider.extract import _canonicalize_graph, to_dot
+from spider._graph import _canonicalize_graph
+from spider.extract import to_dot
 from spider.verify import validate
 
 
