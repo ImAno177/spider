@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="Spider logo" width="96" height="96">
+  <img src="logo.svg" alt="Spider logo" width="96" height="96">
 </p>
 
 <h1 align="center">Spider</h1>
