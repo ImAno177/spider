@@ -9,6 +9,7 @@ These instructions apply to the entire Spider repository.
 | `spider/extract.py` | Public extraction API, Slither compatibility, and project compilation. |
 | `spider/_builder.py` | Build CPG semantics from a compiled Slither unit. |
 | `spider/_graph.py` | Graph primitives, metadata, canonicalization, and DOT rendering. |
+| `spider/schema.py` | Public graph format identifier shared by code and CI. |
 | `spider/verify.py` | Recompute and validate graph invariants. |
 | `spider/solc.py` | Select and fingerprint compatible Solidity compilers. |
 | `spider/__main__.py` | `spider` extraction and multi-view export CLI. |

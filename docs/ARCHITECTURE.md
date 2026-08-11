@@ -22,6 +22,7 @@ Solidity source file or project directory
 | `spider/extract.py` | Apply Slither compatibility fixes, compile the input, and expose the public extraction API. |
 | `spider/_builder.py` | Construct declarations, control/data flow, calls, returns, modifiers, and state-effect relations. |
 | `spider/_graph.py` | Store graph elements, attach source metadata, canonicalize output, and render DOT views. |
+| `spider/schema.py` | Define the graph format identifier consumed by extraction, validation, and README automation. |
 | `spider/verify.py` | Recompute and validate source, structure, control-flow, data-flow, call, return, modifier, and state-effect invariants. |
 | `spider/__main__.py` | Extract and validate one project, write JSON, and process repeated DOT exports. |
 | `spider/batch.py` | Run isolated corpus extractions and write JSONL provenance and aggregate results. |

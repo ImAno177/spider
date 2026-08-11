@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .schema import GRAPH_FORMAT
 
 _ANCHOR_SCHEMA = "spider-source-anchor/1"
 _ATTRIBUTE_SCHEMA = "spider-attributes/1"
@@ -141,7 +142,7 @@ def validate(graph: dict[str, Any]) -> list[str]:
     nodes = {node.get("id"): node for node in graph.get("nodes", [])}
     edges = graph.get("links", [])
     metadata = graph.get("graph", {})
-    if metadata.get("format") != "spider-cpg/1.0":
+    if metadata.get("format") != GRAPH_FORMAT:
         errors.append("unexpected graph format")
     if "input_kind" in metadata or "input_sources" in metadata:
         input_kind = metadata.get("input_kind")

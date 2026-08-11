@@ -9,6 +9,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from .schema import GRAPH_FORMAT
+
 _ATTRIBUTE_SCHEMA = "spider-attributes/1"
 _ANCHOR_SCHEMA = "spider-source-anchor/1"
 _DISTRIBUTION = "spider-solidity-cpg"
@@ -350,7 +352,7 @@ class _Graph:
             "directed": True,
             "multigraph": True,
             "graph": {
-                "format": "spider-cpg/1.0",
+                "format": GRAPH_FORMAT,
                 "tool": "Spider",
                 "source": _canonical_path(self.source),
                 "scope": "file",

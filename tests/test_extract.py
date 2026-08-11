@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from spider import extract
 from spider._graph import _canonicalize_graph
 from spider.extract import to_dot
+from spider.schema import GRAPH_FORMAT
 from spider.verify import validate
 
 
@@ -19,7 +20,7 @@ def test_extract() -> None:
     assert {"CONTRACT", "FUNCTION", "SOLIDITY_MODIFIER", "STATE_VARIABLE", "FUNCTION_EXIT", "BASIC_BLOCK", "INDEX_ACCESS", "BINARY_OPERATION"} <= labels
     assert {"AST", "CFG", "EVAL_ORDER", "REACHING_DEF", "STATE_READ", "STATE_WRITE", "LOW_LEVEL_CALL", "GUARD", "DOMINATE", "POST_DOMINATE"} <= edge_labels
     assert all(node["line_start"] is not None for node in graph["nodes"] if node["code"])
-    assert graph["graph"]["format"] == "spider-cpg/1.0"
+    assert graph["graph"]["format"] == GRAPH_FORMAT
     assert graph["graph"]["tool"] == "Spider"
     assert graph["graph"]["attribute_schema"] == "spider-attributes/1"
     assert graph["graph"]["source_anchor_schema"] == "spider-source-anchor/1"
