@@ -16,6 +16,7 @@ These instructions apply to the entire Spider repository.
 | `spider/batch.py` | Isolated corpus extraction. |
 | `spider/vulnerability.py` | Explainable vulnerability rules, optional model scoring, subgraph union, and DOT. |
 | `spider/train_vulnerability.py` | Optional eight-class model training and artifact reports. |
+| `scripts/evaluate_vulnerability_recall.py` | Reproducible source-line recall and bounded-subgraph evaluation. |
 | `tests/test_extract.py` | Semantic and mutation regression gate. |
 | `docs/SCHEMA.md` | Public graph contract. |
 

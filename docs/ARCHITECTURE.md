@@ -117,8 +117,11 @@ the project.
 Detection runs only after the full `spider-cpg/1.0` graph passes validation.
 Rules use source-resolved CPG facts such as unchecked arithmetic regimes,
 `CHECKS_RETURN`, external interaction order, state writes, caller guards,
-loops, and chain-provided builtin values. Each match records a class, score,
-rule, evidence, and seed node IDs.
+loops, modifiers, internal calls, source-only low-level-call expressions, and
+chain-provided builtin values. The recall path also recognizes unguarded
+`delegatecall`/`selfdestruct`, loop-driven gas growth, modifier overlays, and
+cross-function interactions when older compiler output omits a richer edge.
+Each match records a class, score, rule, evidence, and seed node IDs.
 
 An optional `spider-vulnerability-model/1.0` JSON model scores size-normalized
 node, semantic-attribute, and edge counts. It can corroborate a rule or add a
@@ -142,3 +145,9 @@ retrieval hops, capped per finding by `--vulnerability-max-nodes` (96 by
 default). It then writes the union of all selected finding subgraphs as one
 `spider-vulnerability-subgraph/1.0` document and one DOT view. Original node
 IDs and source anchors are preserved for traceability.
+
+`scripts/evaluate_vulnerability_recall.py` evaluates a class-directory corpus
+with `@vulnerable_at_lines` references and reports candidate recall,
+node/line recall, source-anchor rate, p95 union size, p95 per-finding size, and
+budget violations. It is a recall/localization gate, not a clean-contract
+precision claim.

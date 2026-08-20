@@ -184,6 +184,17 @@ for unchecked-call detection or a timestamp builtin for time manipulation).
 Rule findings remain active even without the model. These are suspicious
 candidates for review, not proof that an exploit exists.
 
+For a source-grounded recall gate on a class-directory corpus with
+`@vulnerable_at_lines` references, run:
+
+```bash
+python scripts/evaluate_vulnerability_recall.py \
+  path/to/graphs --output out/recall-report.json
+```
+
+The report separates candidate recall, node/line recall, source-anchor rate,
+and p95 bounded-subgraph size. It is not a clean-contract precision estimate.
+
 Train a model from compact graph JSONL shards and partial-label detection
 records with the optional ML dependency:
 
