@@ -162,3 +162,46 @@ A change to required fields, field meanings, anchor units, or relation
 semantics requires a new graph format identifier. Graphs produced by different
 extractor versions should not be mixed in one model artifact without rebuilding
 its vocabulary, canonical hashes, and experiment signature.
+
+## Vulnerability subgraph document
+
+`--vulnerability` adds a separate NetworkX node-link document with format
+`spider-vulnerability-subgraph/1.0`; it does not change the required full CPG
+contract. Its `graph` metadata contains:
+
+| Field | Meaning |
+| --- | --- |
+| `parent_format`, `parent_sha256` | Format and exact serialized SHA-256 of the validated parent CPG. |
+| `selection` | Requested canonical class or `all`. |
+| `taxonomy` | Ordered eight-class taxonomy understood by this Spider version. |
+| `detector`, `model_schema` | `rules` or `hybrid`, plus the optional model contract. |
+| `max_hops` | Retrieval closure radius around every finding seed. |
+| `max_nodes` | Requested per-finding node cap for bounded retrieval. All valid seeds are retained; a finding with more seeds than this value may exceed the cap to preserve seed provenance. |
+| `findings` | Ordered class, score, detector, rule, evidence, seed IDs, and selected node IDs. Model-only findings may also include `model_anchor_node_ids` and `model_threshold`. |
+| `node_types`, `edge_types` | Sorted vocabularies present in the unioned subgraph. |
+
+Subgraph nodes preserve their original IDs, canonical order, source anchors,
+and semantic attributes. They add `vulnerability_classes`,
+`vulnerability_findings`, and `vulnerability_seed`. The subset is intentionally
+not recanonicalized: parent IDs are the provenance link. Links preserve their
+parent attributes; a `callsite` field is omitted when its referenced node is
+outside the selected union.
+
+The optional model format is `spider-vulnerability-model/1.0`. It contains the
+exact ordered taxonomy and one logistic classifier per class with `intercept`,
+recall-oriented `threshold`, and a finite map of feature weights. Loading fails
+when either schema or taxonomy differs. Runtime model-only findings additionally
+require class-specific local structural anchors; graph-level score alone is not
+treated as line-level evidence.
+
+The optional GNN hand-off format is
+`spider-vulnerability-localizer/1.0`. It is a parent-bound candidate document,
+not an exploitability proof. Its required fields are `parent_format`,
+`parent_sha256`, the exact eight-class `classes` list, `score_space` set to
+`probability`, and `findings`. Each finding contains `class`, `global_score`,
+`local_score`, `threshold`, `provenance`, `node_scores`, and
+`seed_node_ids`. Spider rejects a parent-hash mismatch, non-finite scores,
+unknown provenance, missing node scores, duplicate seeds, and taxonomy drift.
+Only source-anchored scored nodes become seeds; the existing typed closure and
+per-finding node budget then build the final JSON/DOT report. The accepted
+provenances are `trained_node_head`, `weak_model`, and `rule`.

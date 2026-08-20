@@ -19,6 +19,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+ml = ["scikit-learn>=1.4,<2"]
 
 [project.urls]
 Homepage = "https://github.com/ImAno177/spider"
@@ -29,6 +30,7 @@ Issues = "https://github.com/ImAno177/spider/issues"
 spider = "spider.__main__:main"
 spider-batch = "spider.batch:main"
 spider-verify = "spider.verify:main"
+spider-train-vulnerability = "spider.train_vulnerability:main"
 
 [tool.setuptools.packages.find]
 include = ["spider*"]

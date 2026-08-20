@@ -25,7 +25,9 @@
 Spider compiles a Solidity file or project with a compatible installed `solc`,
 then uses Slither's AST, CFG, and SlithIR to build one typed code property graph
 (CPG). The CLI validates the graph and writes deterministic NetworkX node-link
-JSON. Optional DOT exports provide smaller views for inspection.
+JSON. Optional DOT exports provide smaller views for inspection. An opt-in
+hybrid detector can also write one JSON/DOT subgraph pair for a requested
+vulnerability class or all eight registered classes.
 
 ## Quick start
 
@@ -126,6 +128,76 @@ Modes: `ast`, `cfg`, `cdg`, `ddg`, `pdg`, `calls`, and `cpg`.
 `edge:LABEL=PATH` exports one relation, such as
 `--export edge:XCFG_CALL=out/xcfg-call.dot`.
 
+### Vulnerability subgraphs
+
+`--vulnerability` accepts `all`, `access_control`, `arithmetic`,
+`bad_randomness`, `denial_of_service`, `front_running`, `reentrancy`,
+`time_manipulation`, or `unchecked_low_level_calls`:
+
+```bash
+spider contracts/Vault.sol out/vault.json --vulnerability reentrancy
+```
+
+This keeps the validated full CPG at `out/vault.json` and writes the combined
+suspicious subgraph to `out/vault.reentrancy.json` and
+`out/vault.reentrancy.dot`. Use `--vulnerability-output out/review` to choose
+another prefix and `--vulnerability-hops N` to change the default two-hop CPG
+closure. `--vulnerability-max-nodes N` bounds each finding's retrieved context
+(default 96), so a dense CPG cannot expand into an unbounded contract dump.
+Even when several findings match, Spider writes one unioned pair and keeps each
+finding's seed and node IDs in JSON.
+
+A GNN localizer can hand Spider a parent-bound candidate document without
+adding a PyTorch dependency to Spider:
+
+```bash
+spider contracts/Vault.sol out/vault.json \
+  --vulnerability all \
+  --vulnerability-localizer localizer.json
+```
+
+The document uses `spider-vulnerability-localizer/1.0`, carries the exact
+parent CPG SHA-256, class confidence, scored node IDs, and provenance. Spider
+rejects a mismatched parent or unanchored candidates, then applies the same
+typed closure and JSON/DOT export path. The serializer used by the current
+compact GNN prototype is
+`kaggle_phase2_8class_helper.serialize_compact_localizer`.
+When graph order contains synthetic nodes, pass the source-anchored node ID
+set to that serializer so it re-ranks the full class/node matrix before the
+bounded top-k hand-off.
+
+Rules are always active and attach an evidence string. A trained model can
+corroborate rules and recover model-only candidates without adding an ML
+runtime dependency:
+
+```bash
+spider contracts/Vault.sol out/vault.json \
+  --vulnerability all \
+  --vulnerability-model model.json
+```
+
+The model is an optional, recall-oriented eight-class scorer. Its artifact is
+plain JSON; runtime inference uses only Python's standard library. A model-only
+candidate is emitted only when its score crosses the validation threshold and
+the graph contains a class-specific local anchor (for example, a low-level call
+for unchecked-call detection or a timestamp builtin for time manipulation).
+Rule findings remain active even without the model. These are suspicious
+candidates for review, not proof that an exploit exists.
+
+Train a model from compact graph JSONL shards and partial-label detection
+records with the optional ML dependency:
+
+```bash
+python -m pip install '.[ml]'
+spider-train-vulnerability \
+  --graphs path/to/graph-shards \
+  --labels path/to/detection_records.jsonl \
+  --output out/vulnerability-model
+```
+
+The output directory contains `model.json`, `training-report.json`,
+`manifest.json`, and `checksums.sha256`.
+
 ### Batch extraction
 
 `spider-batch` processes each `.sol` file in an isolated subprocess. One failed
@@ -152,6 +224,9 @@ graph = extract(
 errors = validate(graph)
 if errors:
     raise RuntimeError("\n".join(errors))
+
+from spider import detect_vulnerabilities
+report = detect_vulnerabilities(graph, "reentrancy")
 ```
 
 `extract` accepts a file or directory and returns a NetworkX node-link
@@ -177,6 +252,9 @@ compilation, extraction, canonicalization, and validation.
 - Modifier and state-effect summaries are context-insensitive.
 - Runtime callbacks, proxies, and dynamic targets are not inferred without a
   compiler-resolved source target.
+- Vulnerability rules are deliberately recall-oriented and are neither
+  path-sensitive nor exploit proofs. Model-only candidates are locally gated
+  feature attribution, not line-level supervision.
 - Compiler, parser, and SlithIR failures stop extraction for the affected input.
 
 ## Development

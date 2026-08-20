@@ -14,6 +14,8 @@ These instructions apply to the entire Spider repository.
 | `spider/solc.py` | Select and fingerprint compatible Solidity compilers. |
 | `spider/__main__.py` | `spider` extraction and multi-view export CLI. |
 | `spider/batch.py` | Isolated corpus extraction. |
+| `spider/vulnerability.py` | Explainable vulnerability rules, optional model scoring, subgraph union, and DOT. |
+| `spider/train_vulnerability.py` | Optional eight-class model training and artifact reports. |
 | `tests/test_extract.py` | Semantic and mutation regression gate. |
 | `docs/SCHEMA.md` | Public graph contract. |
 

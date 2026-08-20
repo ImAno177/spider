@@ -1,7 +1,8 @@
 # Architecture
 
-Spider has five stages: compiler selection, project construction, graph
-extraction, canonicalization, and validation.
+Spider has five required stages: compiler selection, project construction,
+graph extraction, canonicalization, and validation. Vulnerability candidate
+detection is an optional post-validation stage.
 
 ```text
 Solidity source file or project directory
@@ -12,6 +13,7 @@ Solidity source file or project directory
   -> canonical node IDs and edge order
   -> graph validation
   -> NetworkX node-link JSON and optional DOT views
+  -> optional rule/model scoring and bounded vulnerability subgraph JSON/DOT
 ```
 
 ## Modules
@@ -26,6 +28,8 @@ Solidity source file or project directory
 | `spider/verify.py` | Recompute and validate source, structure, control-flow, data-flow, call, return, modifier, and state-effect invariants. |
 | `spider/__main__.py` | Extract and validate one project, write JSON, and process repeated DOT exports. |
 | `spider/batch.py` | Run isolated corpus extractions and write JSONL provenance and aggregate results. |
+| `spider/vulnerability.py` | Detect explainable eight-class candidates, validate optional JSON model/localizer inputs, form bounded subgraphs, and render DOT. |
+| `spider/train_vulnerability.py` | Train and evaluate independent recall-oriented classifiers from compact CPG shards and partial labels. |
 
 ## Compiler selection
 
@@ -107,3 +111,34 @@ status before writing output when validation fails.
 The required output is one `spider-cpg/1.0` NetworkX node-link JSON document.
 Repeated `--export` options can also write focused DOT views without recompiling
 the project.
+
+## Vulnerability candidate detection
+
+Detection runs only after the full `spider-cpg/1.0` graph passes validation.
+Rules use source-resolved CPG facts such as unchecked arithmetic regimes,
+`CHECKS_RETURN`, external interaction order, state writes, caller guards,
+loops, and chain-provided builtin values. Each match records a class, score,
+rule, evidence, and seed node IDs.
+
+An optional `spider-vulnerability-model/1.0` JSON model scores size-normalized
+node, semantic-attribute, and edge counts. It can corroborate a rule or add a
+candidate whose seed nodes are the largest positive feature contributions. A
+model-only candidate must also pass a class-specific local-anchor gate; this
+prevents graph-level labels from turning every unrelated node in a contract
+into a finding. The model never replaces rule evidence and does not alter the
+full CPG.
+
+An optional `spider-vulnerability-localizer/1.0` document transports scores from
+the compact GNN node head. It is bound to the exact parent CPG SHA-256 and
+contains class confidence, node scores, seed IDs, and provenance. Spider uses
+it only after schema/hash/source-anchor validation; it does not import PyTorch
+or trust a graph-level score without a source-grounded node. Valid candidates
+enter the same relation allowlist and per-finding closure as rule/model
+findings, so the output contract and provenance remain deterministic.
+
+For each finding, Spider follows a finite allowlist of structural, control,
+data, call, return, and modifier relations for a bounded number of undirected
+retrieval hops, capped per finding by `--vulnerability-max-nodes` (96 by
+default). It then writes the union of all selected finding subgraphs as one
+`spider-vulnerability-subgraph/1.0` document and one DOT view. Original node
+IDs and source anchors are preserved for traceability.
