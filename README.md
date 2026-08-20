@@ -159,8 +159,11 @@ spider contracts/Vault.sol out/vault.json \
 The document uses `spider-vulnerability-localizer/1.0`, carries the exact
 parent CPG SHA-256, class confidence, scored node IDs, and provenance. Spider
 rejects a mismatched parent or unanchored candidates, then applies the same
-typed closure and JSON/DOT export path. The serializer used by the current
-compact GNN prototype is
+typed closure and JSON/DOT export path. A compact GNN bridge may also include
+`selected_classes` (a unique ranked subset of the eight-class taxonomy) and a
+versioned presence-gate decision; these let the bridge abstain or keep the
+retrieval class set bounded without changing Spider's deterministic closure.
+The serializer used by the current compact GNN prototype is
 `kaggle_phase2_8class_helper.serialize_compact_localizer`.
 When graph order contains synthetic nodes, pass the source-anchored node ID
 set to that serializer so it re-ranks the full class/node matrix before the

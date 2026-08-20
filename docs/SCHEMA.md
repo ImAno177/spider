@@ -172,9 +172,11 @@ contract. Its `graph` metadata contains:
 | Field | Meaning |
 | --- | --- |
 | `parent_format`, `parent_sha256` | Format and exact serialized SHA-256 of the validated parent CPG. |
-| `selection` | Requested canonical class or `all`. |
+| `selection` | Requested canonical class, `all`, or a bounded unique list of taxonomy classes. |
 | `taxonomy` | Ordered eight-class taxonomy understood by this Spider version. |
-| `detector`, `model_schema` | `rules` or `hybrid`, plus the optional model contract. |
+| `detector`, `model_schema`, `localizer_schema` | `rules`, `hybrid`, or `localizer`, plus the optional model/localizer contracts. |
+| `localizer_provenances` | Sorted provenance labels copied from accepted localizer findings. |
+| `gate` (localizer document only) | Optional versioned presence-gate probability, threshold, and `pass`/`abstain` decision; an abstained bridge emits no localizer findings. |
 | `max_hops` | Retrieval closure radius around every finding seed. |
 | `max_nodes` | Requested per-finding node cap for bounded retrieval. All valid seeds are retained; a finding with more seeds than this value may exceed the cap to preserve seed provenance. |
 | `findings` | Ordered class, score, detector, rule, evidence, seed IDs, and selected node IDs. Model-only findings may also include `model_anchor_node_ids` and `model_threshold`. |
@@ -204,4 +206,8 @@ not an exploitability proof. Its required fields are `parent_format`,
 unknown provenance, missing node scores, duplicate seeds, and taxonomy drift.
 Only source-anchored scored nodes become seeds; the existing typed closure and
 per-finding node budget then build the final JSON/DOT report. The accepted
-provenances are `trained_node_head`, `weak_model`, and `rule`.
+provenances are `trained_node_head`, `weak_model`, and `rule`. A localizer may
+also provide `selected_classes` as a non-empty unique list; Spider validates
+that list before a caller passes it as the bounded `selection` value. Optional
+presence-gate metadata accepts the versioned schemas
+`phase2-compact-presence-gate/1` and `/2` for backward-compatible loading.
