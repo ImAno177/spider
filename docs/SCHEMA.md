@@ -153,6 +153,30 @@ are not included in the learnable-attribute whitelist.
 
 ## Compatibility
 
+### Pinned compilation plans
+
+The optional `compilation_plan` metadata contains a `spider-compilation-plan/1`
+document. `compilation_unit_id` equals its `unit_id`, which is SHA-256 of the
+canonical JSON document excluding `unit_id`. `compilation_plan_digest` hashes
+the complete plan. Canonical JSON uses sorted keys, ASCII escapes and compact
+separators. The verifier checks both digests, the selected compiler version,
+and equality between plan source hashes and the graph source manifest.
+
+Plans contain `project_id`, `sources` (source-unit name to absolute original
+path and SHA-256), `entries`, `settings`, `compiler` (the full binary fingerprint),
+and `dependencies`. Source names are confined relative POSIX paths. Extraction
+copies verified bytes into a run-scoped source tree; graph anchors reference
+that tree, while the plan preserves original paths and hashes. Each graph
+contains exactly one compiler unit; project manifests do not imply cross-unit
+call edges. `environment_origin` distinguishes reconstructed source closures
+from an original project build.
+
+`spider --compilation-plan PLAN OUTPUT` writes the graph atomically and saves
+Standard JSON input/output, raw compiler stdout/stderr, stage status and
+verification results in `OUTPUT_STEM.compilation/` next to the graph. A solc
+success is not a graph success. The `solc_ok`, `slither_ok`, `graph_built` and
+`graph_valid` status fields are independent gates.
+
 Consumers should check `graph.format` before loading a graph and record
 `extractor_version` with derived datasets. Additive node or edge labels may
 appear while the format remains `spider-cpg/1.0`; consumers must therefore use

@@ -13,12 +13,25 @@ from .solc import pragma_from
 def main() -> None:
     parser = argparse.ArgumentParser(prog="spider-batch", description="Batch-extract a Solidity corpus and write a validated manifest.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("dataset", type=Path)
-    parser.add_argument("output", type=Path)
+    parser.add_argument("dataset", type=Path, nargs="?")
+    parser.add_argument("output", type=Path, nargs="?")
+    parser.add_argument("--project-manifest", type=Path)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--solc-version", help="Require one installed solc version for every source; default selects from each pragma")
     parser.add_argument("--solc-remap", action="append", help="Solidity import remapping; repeat for multiple remappings")
     parser.add_argument("--timeout", type=float, help="Optional per-file extraction timeout in seconds")
     args = parser.parse_args()
+    if args.project_manifest:
+        if args.dataset is None or args.output is not None or args.solc_version or args.solc_remap:
+            parser.error("project manifest cannot be combined with dataset/compiler overrides")
+        from .project_batch import run_manifest
+
+        summary = run_manifest(args.project_manifest, args.dataset, args.workers, args.timeout if args.timeout is not None else 600, args.resume)
+        print(json.dumps(summary, indent=2))
+        return
+    if args.dataset is None or args.output is None or args.resume:
+        parser.error("dataset is required; --resume requires --project-manifest")
     dataset = args.dataset.resolve()
     output = args.output.resolve()
     files = sorted(dataset.rglob("*.sol"))

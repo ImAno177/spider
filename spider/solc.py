@@ -56,9 +56,20 @@ def _without_comments(source: str) -> str:
     return "".join(output)
 
 
+def pragma_expressions(path: str | Path) -> list[str]:
+    """Return every Solidity pragma expression in source order.
+
+    Solidity permits multiple pragmas in one source unit (including imported
+    snippets concatenated into a single file).  Compiler selection must honor
+    all of them; comments and string literals are removed only for scanning.
+    """
+    text = _without_comments(Path(path).read_text(encoding="utf-8", errors="replace"))
+    return [match.group(1).strip() for match in PRAGMA_RE.finditer(text)]
+
+
 def pragma_from(path: str | Path) -> str:
-    match = PRAGMA_RE.search(_without_comments(Path(path).read_text(encoding="utf-8", errors="replace")))
-    return match.group(1).strip() if match else ""
+    expressions = pragma_expressions(path)
+    return expressions[0] if expressions else ""
 
 
 def solidity_sources(path: str | Path) -> list[Path]:
@@ -158,7 +169,7 @@ def resolve_solc(path: str | Path, version: str | None = None) -> tuple[str, Pat
 
 def solc_candidates(path: str | Path, version: str | None = None) -> list[tuple[str, Path]]:
     source_files = solidity_sources(path)
-    expressions = [pragma_from(source) for source in source_files]
+    expressions = [expression for source in source_files for expression in pragma_expressions(source)]
     constraints = sorted(set(expression for expression in expressions if expression))
     versions = installed_solc_versions() if version is None else []
     selected = [version] if version else (compatible_project_versions(constraints, versions) if constraints else [".".join(map(str, item)) for item in reversed(versions)])

@@ -138,6 +138,27 @@ spider-batch dataset/ out/corpus --timeout 30
 Results are written to `graphs/`, `manifest.jsonl`, and `summary.json`. Failed
 inputs remain explicit manifest records.
 
+### Pinned compilation units
+
+For a reproducible project batch, create a `spider-compilation-plan/1` JSON
+document for each source closure. The plan records source-unit names and raw
+source hashes, compiler fingerprint, settings, remappings, and build evidence.
+Spider verifies every hash, runs solc Standard JSON, feeds the persisted output
+to Slither, and validates the resulting CPG:
+
+```bash
+spider --compilation-plan plan.json out/unit.json
+spider-batch --project-manifest manifest.json out/run --workers 2 --timeout 600
+spider-batch --project-manifest manifest.json out/run --resume
+```
+
+The single-unit command stores `input.json`, `output.json`, compiler logs,
+stage status, and verification results beside the graph. The project runner
+keeps a checkpoint, retries a timeout once with a longer limit, and reports
+source files blocked by missing or ambiguous dependencies separately from
+compiler, Slither, and verifier failures. It never edits source bytes or
+creates dependency stubs.
+
 ## Python API
 
 ```python

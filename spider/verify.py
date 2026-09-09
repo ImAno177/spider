@@ -142,6 +142,30 @@ def validate(graph: dict[str, Any]) -> list[str]:
     nodes = {node.get("id"): node for node in graph.get("nodes", [])}
     edges = graph.get("links", [])
     metadata = graph.get("graph", {})
+    if any(key in metadata for key in ("compilation_unit_id", "compilation_plan_digest", "compilation_plan")):
+        from .compilation import SCHEMA, digest
+
+        plan = metadata.get("compilation_plan")
+        if not isinstance(plan, dict) or plan.get("schema") != SCHEMA:
+            errors.append("invalid compilation plan provenance")
+        elif (metadata.get("compilation_plan_digest") != digest(plan)
+              or metadata.get("compilation_unit_id") != plan.get("unit_id")
+              or plan.get("unit_id") != digest({k: v for k, v in plan.items() if k != "unit_id"})):
+            errors.append("compilation plan digest mismatch")
+        else:
+            selection = metadata.get("compiler_selection")
+            if isinstance(selection, dict) and isinstance(selection.get("selected"), dict):
+                selected = selection["selected"].get("requested")
+                candidates = plan.get("compiler_candidates") or [plan.get("compiler", {}).get("requested")]
+                if metadata.get("solc_version") != selected or selected not in candidates:
+                    errors.append("compilation plan compiler selection mismatch")
+            elif metadata.get("solc_version") != plan.get("compiler", {}).get("requested"):
+                errors.append("compilation plan compiler mismatch")
+            source_root = str(metadata.get("source", "")).rstrip("/")
+            expected = {source_root + "/" + name: record.get("sha256") for name, record in plan.get("sources", {}).items()}
+            actual = {record.get("path"): record.get("sha256") for record in metadata.get("source_files", [])}
+            if expected != actual:
+                errors.append("compilation plan source manifest mismatch")
     if metadata.get("format") != GRAPH_FORMAT:
         errors.append("unexpected graph format")
     if "input_kind" in metadata or "input_sources" in metadata:

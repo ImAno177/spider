@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import spider.solc as solc
-from spider.solc import compatible_project_versions, compatible_version, compatible_versions, pragma_from, resolve_solc, solidity_sources
+from spider.solc import compatible_project_versions, compatible_version, compatible_versions, pragma_expressions, pragma_from, resolve_solc, solidity_sources
 
 
 def test_solc_resolution() -> None:
@@ -31,6 +31,12 @@ def test_pragma_ignores_comments(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert pragma_from(source) == "^0.5.17"
+
+
+def test_all_pragmas_are_collected(tmp_path: Path) -> None:
+    source = tmp_path / "Multiple.sol"
+    source.write_text("pragma solidity ^0.6.0;\ncontract A {}\npragma solidity 0.6.6;\n", encoding="utf-8")
+    assert pragma_expressions(source) == ["^0.6.0", "0.6.6"]
 
 
 def test_project_source_discovery(tmp_path: Path) -> None:

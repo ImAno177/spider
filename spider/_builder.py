@@ -662,7 +662,7 @@ def build_graph(
     data["graph"]["solc_version"] = selected_solc
     data["graph"]["solc_args"] = selected_solc_args
     data["graph"]["input_kind"] = "directory" if project_input else "file"
-    data["graph"]["input_sources"] = [_canonical_path(source) for source in source_files]
+    data["graph"]["input_sources"] = sorted({_canonical_path(source) for source in source_files})
     data["graph"]["scope"] = "project" if project_input or len({node["file"] for node in data["nodes"] if node["file"]}) > 1 else "file"
     data["graph"]["has_inline_assembly"] = any(node.get("has_inline_assembly") for node in data["nodes"] if node["label"] in {"CONTRACT", "INTERFACE", "LIBRARY", "ABSTRACT"})
     data["graph"]["compiler_semantic_regime"] = "checked-arithmetic-default" if tuple(map(int, selected_solc.split("."))) >= (0, 8) else "unchecked-arithmetic-default"
