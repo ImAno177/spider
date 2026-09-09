@@ -285,6 +285,21 @@ def _result_base(unit: dict[str, Any], output: Path, runtime: dict[str, Any], at
     }
 
 
+def _runtime_compatible(previous: Any, current: dict[str, Any]) -> bool:
+    """Allow a runner-only change to reuse already verified graph artifacts."""
+    if not isinstance(previous, dict):
+        return False
+    if previous.get("tools") != current.get("tools"):
+        return False
+    before = previous.get("code_sha256")
+    after = current.get("code_sha256")
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return False
+    keys = set(before) | set(after)
+    stable = keys - {"project_batch.py"}
+    return bool(stable) and all(before.get(key) == after.get(key) for key in stable)
+
+
 def _run_unit(unit: dict[str, Any], output: Path, runtime: dict[str, Any], timeout: float, attempt: int = 1) -> dict[str, Any]:
     unit_root = output / "units" / unit["unit_id"]
     unit_root.mkdir(parents=True, exist_ok=True)
@@ -342,10 +357,16 @@ def _run_unit(unit: dict[str, Any], output: Path, runtime: dict[str, Any], timeo
     return result
 
 
-def _validate_cached_result(unit: dict[str, Any], previous: dict[str, Any], output: Path, runtime: dict[str, Any]) -> dict[str, Any] | None:
+def _validate_cached_result(
+    unit: dict[str, Any],
+    previous: dict[str, Any],
+    output: Path,
+    runtime: dict[str, Any],
+    compatible_runtime: bool = False,
+) -> dict[str, Any] | None:
     if not isinstance(previous, dict) or previous.get("status") != "ok":
         return None
-    if previous.get("runtime_signature") != runtime["digest"]:
+    if previous.get("runtime_signature") != runtime["digest"] and not compatible_runtime:
         return None
     plan_path = Path(unit["plan"])
     try:
@@ -363,11 +384,16 @@ def _validate_cached_result(unit: dict[str, Any], previous: dict[str, Any], outp
         return None
     try:
         graph = _read_json(graph_path)
-        errors = validate(graph)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
-    if errors or graph.get("graph", {}).get("compilation_unit_id") != unit["unit_id"]:
+    if graph.get("graph", {}).get("compilation_unit_id") != unit["unit_id"]:
         return None
+    if not compatible_runtime:
+        try:
+            if validate(graph):
+                return None
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
     stages, _, _ = _stage_state(unit_root / "graph.compilation")
     if not all(stages.values()):
         return None
@@ -376,6 +402,7 @@ def _validate_cached_result(unit: dict[str, Any], previous: dict[str, Any], outp
     reused["plan"] = unit["plan"]
     reused["cache_hit"] = True
     reused["attempt"] = 0
+    reused["runtime_signature"] = runtime["digest"]
     return reused
 
 
@@ -515,8 +542,9 @@ def _run_manifest(manifest_path: Path, output: Path, workers: int = 2, timeout: 
     pending: list[dict[str, Any]] = []
     cache_hits = 0
     cache_misses = 0
+    compatible_runtime = _runtime_compatible(checkpoint.get("runtime_signature"), runtime)
     for unit in manifest["units"]:
-        reused = _validate_cached_result(unit, previous.get(unit["unit_id"], {}), output, runtime) if resume else None
+        reused = _validate_cached_result(unit, previous.get(unit["unit_id"], {}), output, runtime, compatible_runtime) if resume else None
         if reused is not None and checkpoint.get("manifest_digest") == manifest_hash:
             results[unit["unit_id"]] = reused
             cache_hits += 1

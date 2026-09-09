@@ -64,6 +64,12 @@ def test_independent_verifier_is_bounded(tmp_path: Path, monkeypatch: pytest.Mon
     ]
 
 
+def test_runner_only_runtime_change_keeps_cache_compatible() -> None:
+    previous = {"tools": {"spider": "x"}, "code_sha256": {"verify.py": "a", "project_batch.py": "old"}}
+    current = {"tools": {"spider": "x"}, "code_sha256": {"verify.py": "a", "project_batch.py": "new"}}
+    assert project_batch._runtime_compatible(previous, current)
+
+
 def test_resume_rejects_mutated_artifact_and_reruns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest, output, unit_id = _fixture(tmp_path)
     calls: list[int] = []
