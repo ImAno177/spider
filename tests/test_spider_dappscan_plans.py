@@ -105,6 +105,62 @@ def test_locked_external_dependency_is_virtualized_in_plan(tmp_path):
     assert plan["dependencies"][0]["id"] == "npm:openzeppelin-solidity@2.3.0"
 
 
+def test_locked_dependency_versions_can_be_scoped_to_projects(tmp_path):
+    spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    roots = [tmp_path / "deps/v1", tmp_path / "deps/v2"]
+    for root in roots:
+        (root / "contracts/math").mkdir(parents=True)
+        (root / "contracts/math/SafeMath.sol").write_text(
+            "pragma solidity ^0.4.24; library SafeMath {}", encoding="utf-8"
+        )
+    lock = tmp_path / "lock.json"
+    entries = []
+    for index, root in enumerate(roots, start=1):
+        entries.append(
+            {
+                "id": f"npm:@openzeppelin/contracts@{index}.0.0",
+                "prefix": "@openzeppelin/contracts/",
+                "root": str(root),
+                "projects": [f"audit/project-{index}"],
+            }
+        )
+    lock.write_text(json.dumps({"schema": "spider-dappscan-dependency-lock/1", "entries": entries}))
+    loaded = module._load_dependency_lock(lock)
+    observed = {"@openzeppelin/contracts/": {"contracts/math/SafeMath.sol"}}
+    selected = module.infer_locked_package_remappings([], observed, loaded, "audit/project-2")
+    assert selected[0] == ["@openzeppelin/contracts/=" + roots[1].resolve().as_posix() + "/"]
+    assert selected[3][0]["id"].endswith("@2.0.0")
+    assert module.infer_locked_package_remappings([], observed, loaded, "audit/unknown")[0] == []
+
+
+def test_locked_dependency_scope_overlap_is_rejected(tmp_path):
+    root = tmp_path / "deps"
+    (root / "contracts").mkdir(parents=True)
+    lock = tmp_path / "lock.json"
+    lock.write_text(
+        json.dumps(
+            {
+                "schema": "spider-dappscan-dependency-lock/1",
+                "entries": [
+                    {"id": "one", "prefix": "pkg/", "root": str(root), "projects": ["audit/project"]},
+                    {"id": "two", "prefix": "pkg/", "root": str(root), "projects": ["audit/project"]},
+                ],
+            }
+        )
+    )
+    spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        module._load_dependency_lock(lock)
+    except ValueError as error:
+        assert "duplicate dependency lock prefix/project" in str(error)
+    else:
+        raise AssertionError("overlapping scoped lock entries must be rejected")
+
+
 def test_plan_uses_verified_foundry_settings(tmp_path):
     spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
     module = importlib.util.module_from_spec(spec)

@@ -113,6 +113,7 @@ def _load_dependency_lock(path: Path | None) -> list[dict]:
         raise ValueError("invalid DAppSCAN dependency lock schema")
     entries: list[dict] = []
     seen_prefixes: set[str] = set()
+    scoped_prefixes: dict[str, set[str]] = defaultdict(set)
     for index, item in enumerate(value["entries"]):
         if not isinstance(item, dict):
             raise ValueError(f"dependency lock entry {index} must be an object")
@@ -120,7 +121,22 @@ def _load_dependency_lock(path: Path | None) -> list[dict]:
         root_value = item.get("root")
         if not isinstance(prefix, str) or not prefix or not prefix.endswith("/"):
             raise ValueError(f"dependency lock entry {index} has invalid prefix")
-        if prefix in seen_prefixes:
+        projects = item.get("projects")
+        if projects is not None:
+            if (
+                not isinstance(projects, list)
+                or not projects
+                or any(not isinstance(project, str) or not project for project in projects)
+                or len(set(projects)) != len(projects)
+            ):
+                raise ValueError(f"dependency lock entry {index} has invalid projects")
+            overlap = scoped_prefixes[prefix].intersection(projects)
+            if overlap:
+                raise ValueError(
+                    f"duplicate dependency lock prefix/project: {prefix} / {sorted(overlap)}"
+                )
+            scoped_prefixes[prefix].update(projects)
+        elif prefix in seen_prefixes or scoped_prefixes.get(prefix):
             raise ValueError(f"duplicate dependency lock prefix: {prefix}")
         if not isinstance(root_value, str) or not root_value:
             raise ValueError(f"dependency lock entry {index} has invalid root")
@@ -157,10 +173,16 @@ def _load_dependency_lock(path: Path | None) -> list[dict]:
     return entries
 
 
+def _locked_entry_for_project(entry: dict, project_id: str) -> bool:
+    projects = entry.get("projects")
+    return projects is None or project_id in projects
+
+
 def infer_locked_package_remappings(
     existing: list[str],
     observed: dict[str, set[str]],
     lock_entries: list[dict],
+    project_id: str = "",
 ) -> tuple[list[str], list[str], list[dict], list[dict], list[str]]:
     """Return physical/virtual remappings and provenance for locked packages."""
 
@@ -170,10 +192,20 @@ def infer_locked_package_remappings(
     evidence: list[dict] = []
     selected: list[dict] = []
     warnings: list[str] = []
+    entries_by_prefix: dict[str, list[dict]] = defaultdict(list)
     for entry in lock_entries:
-        prefix = entry["prefix"]
+        if _locked_entry_for_project(entry, project_id):
+            entries_by_prefix[entry["prefix"]].append(entry)
+    for prefix, candidates in sorted(entries_by_prefix.items()):
         if prefix in existing_prefixes or prefix not in observed:
             continue
+        if len(candidates) > 1:
+            warnings.append(
+                f"AMBIGUOUS_LOCKED_DEPENDENCY: project={project_id!r} prefix={prefix!r} "
+                f"candidates={[entry['id'] for entry in candidates]}"
+            )
+            continue
+        entry = candidates[0]
         root = Path(entry["root"])
         suffixes = observed[prefix]
         if not all((root / suffix).is_file() for suffix in suffixes):
@@ -292,7 +324,9 @@ def build(inventory_path: Path, output: Path, dependency_lock: Path | None = Non
             if cached_inference is None:
                 observed = _observed_package_imports(project)
                 local, local_evidence, local_warnings = infer_local_package_remappings(project, remappings, observed)
-                locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings = infer_locked_package_remappings(remappings + local, observed, lock_entries)
+                locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings = infer_locked_package_remappings(
+                    remappings + local, observed, lock_entries, project_id
+                )
                 cached_inference = (local, local_evidence, local_warnings, locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings)
                 inferred_by_project[project] = cached_inference
             inferred, inference_evidence, inference_warnings, locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings = cached_inference
