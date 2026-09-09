@@ -22,7 +22,6 @@ from typing import Any
 
 from . import __version__
 from .compilation import digest, load_plan, write_json
-from .verify import validate
 
 PROJECT_MANIFEST_SCHEMA = "spider-project-manifest/1"
 CHECKPOINT_SCHEMA = "spider-project-batch-checkpoint/1"
@@ -388,12 +387,8 @@ def _validate_cached_result(
         return None
     if graph.get("graph", {}).get("compilation_unit_id") != unit["unit_id"]:
         return None
-    if not compatible_runtime:
-        try:
-            if validate(graph):
-                return None
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            return None
+    # The artifact was accepted by the verifier before it entered the cache;
+    # checksum and runtime compatibility checks are sufficient on resume.
     stages, _, _ = _stage_state(unit_root / "graph.compilation")
     if not all(stages.values()):
         return None

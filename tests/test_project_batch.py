@@ -73,7 +73,6 @@ def test_runner_only_runtime_change_keeps_cache_compatible() -> None:
 def test_resume_rejects_mutated_artifact_and_reruns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest, output, unit_id = _fixture(tmp_path)
     calls: list[int] = []
-    monkeypatch.setattr(project_batch, "validate", lambda graph: [])
 
     def fake_run(unit: dict, destination: Path, runtime: dict, timeout: float, attempt: int = 1) -> dict:
         calls.append(attempt)
