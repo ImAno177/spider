@@ -191,6 +191,7 @@ def _run_process(command: list[str], timeout: float, cwd: Path) -> dict[str, Any
             "timeout": False,
             "seconds": round(time.monotonic() - started, 3),
         }
+
     except subprocess.TimeoutExpired:
         _kill_process_tree(process, process_group)
         stdout, stderr = process.communicate()
@@ -201,6 +202,21 @@ def _run_process(command: list[str], timeout: float, cwd: Path) -> dict[str, Any
             "timeout": True,
             "seconds": round(time.monotonic() - started, 3),
         }
+
+
+def _verify_graph(graph_path: Path, timeout: float, cwd: Path) -> list[str]:
+    """Run the independent verifier in its own bounded process."""
+    process = _run_process([sys.executable, "-m", "spider.verify", str(graph_path)], timeout, cwd)
+    if process["timeout"]:
+        return [f"independent verifier timed out after {timeout:g}s"]
+    if process["returncode"] == 0:
+        return []
+    stdout = process["stdout"].decode("utf-8", errors="replace")
+    errors = [line[2:] for line in stdout.splitlines() if line.startswith("- ")]
+    if errors:
+        return errors
+    detail = process["stderr"].decode("utf-8", errors="replace").strip() or stdout.strip()
+    return [detail or f"independent verifier exited with code {process['returncode']}"]
 
 
 def _artifact_checksums(root: Path) -> dict[str, str]:
@@ -304,7 +320,7 @@ def _run_unit(unit: dict[str, Any], output: Path, runtime: dict[str, Any], timeo
         result["graph_sha256"] = _sha256(graph_path)
         try:
             graph = _read_json(graph_path)
-            errors = validate(graph)
+            errors = _verify_graph(graph_path, timeout, Path(__file__).resolve().parents[1])
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
             errors = [f"invalid graph JSON: {error}"]
         if errors:

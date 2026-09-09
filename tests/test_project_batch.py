@@ -53,6 +53,17 @@ def test_rejects_duplicate_or_unsafe_unit_ids(tmp_path: Path) -> None:
         project_batch.run_manifest(manifest, output)
 
 
+def test_independent_verifier_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        project_batch,
+        "_run_process",
+        lambda command, timeout, cwd: {"returncode": -9, "stdout": b"", "stderr": b"", "timeout": True, "seconds": timeout},
+    )
+    assert project_batch._verify_graph(tmp_path / "graph.json", 12, tmp_path) == [
+        "independent verifier timed out after 12s"
+    ]
+
+
 def test_resume_rejects_mutated_artifact_and_reruns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest, output, unit_id = _fixture(tmp_path)
     calls: list[int] = []
