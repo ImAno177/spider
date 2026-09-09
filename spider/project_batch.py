@@ -381,7 +381,9 @@ def _validate_cached_result(
     if not previous.get("cache_recovered") and checksums != _artifact_checksums(unit_root):
         return None
     graph_path = unit_root / "graph.json"
-    if not graph_path.is_file() or previous.get("graph_sha256") != _sha256(graph_path):
+    if not graph_path.is_file() or (
+        not previous.get("cache_recovered") and previous.get("graph_sha256") != _sha256(graph_path)
+    ):
         return None
     if previous.get("cache_recovered"):
         if not graph_path.is_file():
