@@ -421,18 +421,23 @@ def _load_checkpoint(path: Path) -> dict[str, Any]:
 
 
 def _write_checkpoint(output: Path, manifest_path: Path, manifest_digest: str, manifest: dict[str, Any], runtime: dict[str, Any], results: dict[str, dict[str, Any]]) -> None:
-    write_json(
-        output / "checkpoint.json",
-        {
-            "schema": CHECKPOINT_SCHEMA,
-            "manifest": str(manifest_path),
-            "manifest_digest": manifest_digest,
-            "snapshot_commit": manifest["snapshot_commit"],
-            "runtime_signature": runtime,
-            "results": [results[key] for key in sorted(results)],
-            "updated_at": _now(),
-        },
-    )
+    value = {
+        "schema": CHECKPOINT_SCHEMA,
+        "manifest": str(manifest_path),
+        "manifest_digest": manifest_digest,
+        "snapshot_commit": manifest["snapshot_commit"],
+        "runtime_signature": runtime,
+        "results": [results[key] for key in sorted(results)],
+        "updated_at": _now(),
+    }
+    for attempt in range(8):
+        try:
+            write_json(output / "checkpoint.json", value)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(0.25)
 
 
 def _coverage(manifest: dict[str, Any], results: dict[str, dict[str, Any]]) -> dict[str, Any]:
