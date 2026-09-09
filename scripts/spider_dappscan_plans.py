@@ -25,11 +25,27 @@ def _remapping_prefix(value: str) -> str:
 
 
 def _observed_package_imports(project: Path) -> dict[str, set[str]]:
+    observed_contexts = _observed_package_import_contexts(project)
     observed: dict[str, set[str]] = defaultdict(set)
+    for (_, prefix), suffixes in observed_contexts.items():
+        observed[prefix].update(suffixes)
+    return observed
+
+
+def _observed_package_import_contexts(project: Path) -> dict[tuple[str, str], set[str]]:
+    """Return external imports grouped by their Solidity importer.
+
+    Context-aware remappings are part of solc's resolution semantics. Keeping
+    the importer source-unit name here lets a lock entry select an old package
+    only for a legacy subtree without weakening the global dependency check.
+    """
+
+    observed: dict[tuple[str, str], set[str]] = defaultdict(set)
     for source in sorted(project.rglob("*.sol")):
         try:
             imports_in_source = imports(source.read_text(encoding="utf-8", errors="strict"))
-        except (OSError, UnicodeError):
+            source_name = source.relative_to(project).as_posix()
+        except (OSError, UnicodeError, ValueError):
             continue
         for imported in imports_in_source:
             imported = imported.replace("\\", "/")
@@ -46,7 +62,7 @@ def _observed_package_imports(project: Path) -> dict[str, set[str]]:
                     continue
                 prefix = parts[0] + "/"
                 suffix = "/".join(parts[1:])
-            observed[prefix].add(suffix)
+            observed[(source_name, prefix)].add(suffix)
     return observed
 
 
@@ -112,8 +128,7 @@ def _load_dependency_lock(path: Path | None) -> list[dict]:
     if value.get("schema") != "spider-dappscan-dependency-lock/1" or not isinstance(value.get("entries"), list):
         raise ValueError("invalid DAppSCAN dependency lock schema")
     entries: list[dict] = []
-    seen_prefixes: set[str] = set()
-    scoped_prefixes: dict[str, set[str]] = defaultdict(set)
+    seen_scopes: list[tuple[str, str, list[str] | None]] = []
     for index, item in enumerate(value["entries"]):
         if not isinstance(item, dict):
             raise ValueError(f"dependency lock entry {index} must be an object")
@@ -121,6 +136,9 @@ def _load_dependency_lock(path: Path | None) -> list[dict]:
         root_value = item.get("root")
         if not isinstance(prefix, str) or not prefix or not prefix.endswith("/"):
             raise ValueError(f"dependency lock entry {index} has invalid prefix")
+        context = item.get("context")
+        if context is not None and (not isinstance(context, str) or not context or context.startswith("/")):
+            raise ValueError(f"dependency lock entry {index} has invalid context")
         projects = item.get("projects")
         if projects is not None:
             if (
@@ -130,14 +148,16 @@ def _load_dependency_lock(path: Path | None) -> list[dict]:
                 or len(set(projects)) != len(projects)
             ):
                 raise ValueError(f"dependency lock entry {index} has invalid projects")
-            overlap = scoped_prefixes[prefix].intersection(projects)
+        for old_prefix, old_context, old_projects in seen_scopes:
+            if old_prefix != prefix or old_context != (context or ""):
+                continue
+            if old_projects is None or projects is None:
+                raise ValueError(f"duplicate dependency lock prefix/context: {prefix} / {context or '<global>'}")
+            overlap = set(old_projects).intersection(projects)
             if overlap:
                 raise ValueError(
                     f"duplicate dependency lock prefix/project: {prefix} / {sorted(overlap)}"
                 )
-            scoped_prefixes[prefix].update(projects)
-        elif prefix in seen_prefixes or scoped_prefixes.get(prefix):
-            raise ValueError(f"duplicate dependency lock prefix: {prefix}")
         if not isinstance(root_value, str) or not root_value:
             raise ValueError(f"dependency lock entry {index} has invalid root")
         root = Path(root_value).resolve()
@@ -169,7 +189,7 @@ def _load_dependency_lock(path: Path | None) -> list[dict]:
         entry["root"] = str(root)
         entry["virtual_prefix"] = f"dependencies/{safe}/"
         entries.append(entry)
-        seen_prefixes.add(prefix)
+        seen_scopes.append((prefix, context or "", projects))
     return entries
 
 
@@ -183,6 +203,7 @@ def infer_locked_package_remappings(
     observed: dict[str, set[str]],
     lock_entries: list[dict],
     project_id: str = "",
+    observed_contexts: dict[tuple[str, str], set[str]] | None = None,
 ) -> tuple[list[str], list[str], list[dict], list[dict], list[str]]:
     """Return physical/virtual remappings and provenance for locked packages."""
 
@@ -199,32 +220,67 @@ def infer_locked_package_remappings(
     for prefix, candidates in sorted(entries_by_prefix.items()):
         if prefix in existing_prefixes or prefix not in observed:
             continue
-        if len(candidates) > 1:
-            warnings.append(
-                f"AMBIGUOUS_LOCKED_DEPENDENCY: project={project_id!r} prefix={prefix!r} "
-                f"candidates={[entry['id'] for entry in candidates]}"
+        by_context: dict[str, list[dict]] = defaultdict(list)
+        for entry in candidates:
+            by_context[entry.get("context", "")].append(entry)
+        contextual = [entry for context, values in by_context.items() if context for entry in values]
+        for context, context_candidates in sorted(by_context.items()):
+            if len(context_candidates) > 1:
+                warnings.append(
+                    f"AMBIGUOUS_LOCKED_DEPENDENCY: project={project_id!r} prefix={prefix!r} "
+                    f"context={context or '<global>'!r} candidates={[entry['id'] for entry in context_candidates]}"
+                )
+                continue
+            entry = context_candidates[0]
+            root = Path(entry["root"])
+            if context:
+                suffixes = {
+                    suffix
+                    for (source_name, observed_prefix), values in (observed_contexts or {}).items()
+                    if observed_prefix == prefix
+                    and (source_name == context or source_name.startswith(context + "/"))
+                    for suffix in values
+                }
+            else:
+                suffixes = set(observed[prefix])
+                # Context-specific entries take responsibility for their own
+                # importers, so a global package is not rejected merely
+                # because a legacy subtree uses a different package version.
+                if observed_contexts and contextual:
+                    for (source_name, observed_prefix), values in observed_contexts.items():
+                        if observed_prefix != prefix:
+                            continue
+                        if any(
+                            candidate.get("context")
+                            and (source_name == candidate["context"] or source_name.startswith(candidate["context"] + "/"))
+                            for candidate in contextual
+                        ):
+                            suffixes.difference_update(values)
+            if not suffixes:
+                continue
+            missing = [suffix for suffix in suffixes if not (root / suffix).is_file()]
+            if missing:
+                warnings.append(
+                    f"locked dependency is missing an observed source: {prefix}"
+                    + (f" context={context}" if context else "")
+                )
+                continue
+            left = f"{context}:{prefix}" if context else prefix
+            resolution.append(f"{left}={root.as_posix().rstrip('/')}/")
+            compiler.append(f"{left}={entry['virtual_prefix']}")
+            selected_entry = dict(entry)
+            selected.append(selected_entry)
+            evidence.append(
+                {
+                    "kind": "dappscan-locked-dependency",
+                    "id": entry["id"],
+                    "prefix": prefix,
+                    "context": context or None,
+                    "root": str(root),
+                    "archive_sha256": entry.get("archive_sha256"),
+                    "integrity": entry.get("integrity"),
+                }
             )
-            continue
-        entry = candidates[0]
-        root = Path(entry["root"])
-        suffixes = observed[prefix]
-        if not all((root / suffix).is_file() for suffix in suffixes):
-            warnings.append(f"locked dependency is missing an observed source: {prefix}")
-            continue
-        resolution.append(f"{prefix}={root.as_posix().rstrip('/')}/")
-        compiler.append(f"{prefix}={entry['virtual_prefix']}")
-        selected_entry = dict(entry)
-        selected.append(selected_entry)
-        evidence.append(
-            {
-                "kind": "dappscan-locked-dependency",
-                "id": entry["id"],
-                "prefix": prefix,
-                "root": str(root),
-                "archive_sha256": entry.get("archive_sha256"),
-                "integrity": entry.get("integrity"),
-            }
-        )
     return resolution, compiler, evidence, selected, warnings
 
 
@@ -323,9 +379,10 @@ def build(inventory_path: Path, output: Path, dependency_lock: Path | None = Non
             cached_inference = inferred_by_project.get(project)
             if cached_inference is None:
                 observed = _observed_package_imports(project)
+                observed_contexts = _observed_package_import_contexts(project)
                 local, local_evidence, local_warnings = infer_local_package_remappings(project, remappings, observed)
                 locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings = infer_locked_package_remappings(
-                    remappings + local, observed, lock_entries, project_id
+                    remappings + local, observed, lock_entries, project_id, observed_contexts
                 )
                 cached_inference = (local, local_evidence, local_warnings, locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings)
                 inferred_by_project[project] = cached_inference

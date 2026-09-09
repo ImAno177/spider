@@ -161,6 +161,50 @@ def test_locked_dependency_scope_overlap_is_rejected(tmp_path):
         raise AssertionError("overlapping scoped lock entries must be rejected")
 
 
+def test_contextual_locked_dependency_selects_legacy_subtree(tmp_path):
+    spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    old_root = tmp_path / "deps/old"
+    new_root = tmp_path / "deps/new"
+    (old_root / "math").mkdir(parents=True)
+    (new_root / "token").mkdir(parents=True)
+    (old_root / "math/SafeMath.sol").write_text("pragma solidity ^0.5.0; library SafeMath {}", encoding="utf-8")
+    (new_root / "token/IERC20.sol").write_text("pragma solidity ^0.8.0; interface IERC20 {}", encoding="utf-8")
+    lock = tmp_path / "lock.json"
+    lock.write_text(
+        json.dumps(
+            {
+                "schema": "spider-dappscan-dependency-lock/1",
+                "entries": [
+                    {
+                        "id": "npm:openzeppelin-v3@3.4.2",
+                        "prefix": "@openzeppelin/contracts/",
+                        "context": "legacy",
+                        "root": str(old_root),
+                        "projects": ["audit/project"],
+                    },
+                    {
+                        "id": "npm:openzeppelin-v4@4.3.2",
+                        "prefix": "@openzeppelin/contracts/",
+                        "root": str(new_root),
+                        "projects": ["audit/project"],
+                    },
+                ],
+            }
+        )
+    )
+    entries = module._load_dependency_lock(lock)
+    observed = {"@openzeppelin/contracts/": {"math/SafeMath.sol", "token/IERC20.sol"}}
+    contexts = {
+        ("legacy/Old.sol", "@openzeppelin/contracts/"): {"math/SafeMath.sol"},
+        ("Current.sol", "@openzeppelin/contracts/"): {"token/IERC20.sol"},
+    }
+    selected = module.infer_locked_package_remappings([], observed, entries, "audit/project", contexts)
+    assert selected[0] == [f"@openzeppelin/contracts/={new_root.resolve().as_posix()}/", f"legacy:@openzeppelin/contracts/={old_root.resolve().as_posix()}/"]
+    assert [item["id"] for item in selected[3]] == ["npm:openzeppelin-v4@4.3.2", "npm:openzeppelin-v3@3.4.2"]
+
+
 def test_plan_uses_verified_foundry_settings(tmp_path):
     spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
     module = importlib.util.module_from_spec(spec)
