@@ -43,6 +43,68 @@ def test_infer_local_monorepo_package_remapping_requires_complete_target(tmp_pat
     assert module.infer_local_package_remappings(project, inferred)[0] == []
 
 
+def test_locked_external_dependency_is_virtualized_in_plan(tmp_path):
+    spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source_root = tmp_path / "sources"
+    project = source_root / "audit/project"
+    project.mkdir(parents=True)
+    dependency = tmp_path / "deps/openzeppelin-solidity-2.3.0"
+    (dependency / "contracts/math").mkdir(parents=True)
+    (dependency / "contracts/math/SafeMath.sol").write_text(
+        "pragma solidity ^0.4.24; library SafeMath {}", encoding="utf-8"
+    )
+    source = project / "A.sol"
+    source.write_text(
+        'pragma solidity 0.4.25; import "openzeppelin-solidity-2.3.0/contracts/math/SafeMath.sol"; contract A {}',
+        encoding="utf-8",
+    )
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "source_root": str(source_root),
+                "commit": "fixed",
+                "files": [
+                    {
+                        "path": "audit/project/A.sol",
+                        "project_id": "audit/project",
+                        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                        "kind": "solidity",
+                    }
+                ],
+            }
+        )
+    )
+    lock = tmp_path / "lock.json"
+    archive = tmp_path / "dependency.tgz"
+    archive.write_bytes(b"locked dependency")
+    lock.write_text(
+        json.dumps(
+            {
+                "schema": "spider-dappscan-dependency-lock/1",
+                "entries": [
+                    {
+                        "id": "npm:openzeppelin-solidity@2.3.0",
+                        "prefix": "openzeppelin-solidity-2.3.0/",
+                        "root": str(dependency),
+                        "archive": str(archive),
+                        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                        "integrity": "sha512-test",
+                    }
+                ],
+            }
+        )
+    )
+    summary = module.build(inventory, tmp_path / "plans", lock)
+    assert summary == {"files": 1, "units": 1, "blocked": 0}
+    plan = json.loads(next((tmp_path / "plans/plans").glob("*.json")).read_text())
+    assert "dependencies/npm-openzeppelin-solidity-2.3.0/contracts/math/SafeMath.sol" in plan["sources"]
+    assert "openzeppelin-solidity-2.3.0/=dependencies/npm-openzeppelin-solidity-2.3.0/" in plan["settings"]["remappings"]
+    assert plan["dependencies"][0]["id"] == "npm:openzeppelin-solidity@2.3.0"
+
+
 def test_plan_uses_verified_foundry_settings(tmp_path):
     spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
     module = importlib.util.module_from_spec(spec)
