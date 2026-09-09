@@ -13,8 +13,90 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from spider.build_environment import discover_build
 from spider.compilation import SCHEMA, digest, write_json
-from spider.resolver import resolve_closure
+from spider.resolver import imports, resolve_closure
 from spider.solc import compatible_project_versions, compiler_fingerprint, installed_solc_versions, pragma_expressions
+
+
+def _remapping_prefix(value: str) -> str:
+    """Return the prefix portion of a Solidity remapping."""
+
+    left = value.split("=", 1)[0]
+    return left.rsplit(":", 1)[-1].rstrip("/") + "/"
+
+
+def infer_local_package_remappings(project: Path, existing: list[str]) -> tuple[list[str], list[dict], list[str]]:
+    """Infer only verifiable monorepo package aliases already in ``project``.
+
+    A number of DAppSCAN projects preserve a monorepo's package directories but
+    omit its generated ``remappings.txt``.  The 0x layout, for example, keeps
+    ``contracts/utils`` while sources import ``@0x/contracts-utils``.  We add a
+    remapping only when every observed suffix for the package exists below one
+    unique project-local target; no corpus-wide or basename search is used.
+    """
+
+    observed: dict[str, set[str]] = defaultdict(set)
+    for source in sorted(project.rglob("*.sol")):
+        try:
+            imports_in_source = imports(source.read_text(encoding="utf-8", errors="strict"))
+        except (OSError, UnicodeError):
+            continue
+        for imported in imports_in_source:
+            imported = imported.replace("\\", "/")
+            if imported.startswith(("./", "../", "/")):
+                continue
+            parts = imported.split("/")
+            if imported.startswith("@"):
+                if len(parts) < 3:
+                    continue
+                prefix = "/".join(parts[:2]) + "/"
+                package = parts[1]
+                suffix = "/".join(parts[2:])
+            else:
+                if len(parts) < 2:
+                    continue
+                prefix = parts[0] + "/"
+                package = parts[0]
+                suffix = "/".join(parts[1:])
+            # This convention is the package-to-directory relationship used by
+            # the preserved 0x-style monorepos. Other package names need an
+            # explicit build remapping or dependency provenance.
+            if not package.startswith("contracts-"):
+                continue
+            observed[prefix].add(suffix)
+
+    existing_prefixes = {_remapping_prefix(item) for item in existing}
+    inferred: list[str] = []
+    evidence: list[dict] = []
+    warnings: list[str] = []
+    for prefix, suffixes in sorted(observed.items()):
+        if prefix in existing_prefixes:
+            continue
+        package = prefix.rstrip("/").split("/")[-1]
+        package_dir = package.removeprefix("contracts-")
+        candidates = []
+        for target in (project / "contracts" / package_dir, project / "packages" / package_dir, project / package_dir):
+            if target.is_dir() and all((target / suffix).is_file() for suffix in suffixes):
+                candidates.append(target.resolve())
+        if len(candidates) > 1:
+            warnings.append(
+                f"local package remapping ambiguous for {prefix}: "
+                + ", ".join(str(item) for item in candidates)
+            )
+            continue
+        if not candidates:
+            continue
+        target = candidates[0]
+        relative_target = target.relative_to(project).as_posix().rstrip("/") + "/"
+        inferred.append(f"{prefix}={relative_target}")
+        evidence.append(
+            {
+                "kind": "dappscan-local-package-layout",
+                "prefix": prefix,
+                "target": relative_target,
+                "observed_suffixes": sorted(suffixes),
+            }
+        )
+    return inferred, evidence, warnings
 
 
 def group_units(units: list[dict], output: Path) -> list[dict]:
@@ -72,6 +154,7 @@ def build(inventory_path: Path, output: Path) -> dict:
     versions = installed_solc_versions()
     source_records = [record for record in inventory["files"] if record.get("kind", "solidity") == "solidity"]
     units, blocked, seen = [], [], {}
+    inferred_by_project: dict[Path, tuple[list[str], list[dict], list[str]]] = {}
     output.mkdir(parents=True, exist_ok=True)
     for record in source_records:
         filename, project_id = record["path"], record["project_id"]
@@ -84,6 +167,14 @@ def build(inventory_path: Path, output: Path) -> dict:
             entry = source.relative_to(project).as_posix()
             build = discover_build(project)
             remappings = list(build["remappings"])
+            cached_inference = inferred_by_project.get(project)
+            if cached_inference is None:
+                cached_inference = infer_local_package_remappings(project, remappings)
+                inferred_by_project[project] = cached_inference
+            inferred, inference_evidence, inference_warnings = cached_inference
+            remappings.extend(inferred)
+            build["evidence"] = [*build["evidence"], *inference_evidence]
+            build["warnings"] = [*build["warnings"], *inference_warnings]
             stage = "dependency"
             closure = resolve_closure(project, [entry], remappings)
             stage = "compiler_selection"

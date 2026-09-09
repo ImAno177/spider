@@ -25,6 +25,24 @@ def test_plan_inventory_keeps_blocked_sources(tmp_path):
     assert "MISSING_DEPENDENCY" in manifest["blocked"][0]["error"]
 
 
+def test_infer_local_monorepo_package_remapping_requires_complete_target(tmp_path):
+    spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    project = tmp_path / "sources/audit/project"
+    (project / "contracts/utils/contracts/src").mkdir(parents=True)
+    (project / "contracts/utils/contracts/src/Lib.sol").write_text("pragma solidity 0.4.25; library Lib {}", encoding="utf-8")
+    (project / "contracts/App.sol").write_text(
+        'pragma solidity 0.4.25; import "@0x/contracts-utils/contracts/src/Lib.sol"; contract App {}',
+        encoding="utf-8",
+    )
+    inferred, evidence, warnings = module.infer_local_package_remappings(project, [])
+    assert inferred == ["@0x/contracts-utils/=contracts/utils/"]
+    assert evidence[0]["kind"] == "dappscan-local-package-layout"
+    assert warnings == []
+    assert module.infer_local_package_remappings(project, inferred)[0] == []
+
+
 def test_plan_uses_verified_foundry_settings(tmp_path):
     spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
     module = importlib.util.module_from_spec(spec)
