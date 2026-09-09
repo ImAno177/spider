@@ -93,10 +93,10 @@ def _add_control_dependence(graph: _Graph, entry: str, exit_: str, blocks: list[
     for vertex in vertices:
         strict = postdominators[vertex] - {vertex}
         if strict:
-            immediate_postdominator[vertex] = max(strict, key=lambda candidate: len(postdominators[candidate]))
+            immediate_postdominator[vertex] = max(strict, key=lambda candidate: (len(postdominators[candidate]), candidate))
         strict = dominators[vertex] - {vertex}
         if strict:
-            graph.edge(max(strict, key=lambda candidate: len(dominators[candidate])), vertex, "DOMINATE")
+            graph.edge(max(strict, key=lambda candidate: (len(dominators[candidate]), candidate)), vertex, "DOMINATE")
         if vertex in immediate_postdominator:
             graph.edge(immediate_postdominator[vertex], vertex, "POST_DOMINATE")
     for branch in blocks:

@@ -118,8 +118,8 @@ def _control_edges(vertices: set[str], entry: str, exit_: str, edges: list[dict[
             value = {vertex} | (set.intersection(*(postdominators[child] for child in successors[vertex])) if successors[vertex] else set())
             if value != postdominators[vertex]:
                 postdominators[vertex], changed = value, True
-    dominate = {(max(dominators[vertex] - {vertex}, key=lambda parent: len(dominators[parent])), vertex) for vertex in vertices if dominators[vertex] - {vertex}}
-    post_dominate = {(max(postdominators[vertex] - {vertex}, key=lambda child: len(postdominators[child])), vertex) for vertex in vertices if postdominators[vertex] - {vertex}}
+    dominate = {(max(dominators[vertex] - {vertex}, key=lambda parent: (len(dominators[parent]), parent)), vertex) for vertex in vertices if dominators[vertex] - {vertex}}
+    post_dominate = {(max(postdominators[vertex] - {vertex}, key=lambda child: (len(postdominators[child]), child)), vertex) for vertex in vertices if postdominators[vertex] - {vertex}}
     immediate_postdominator = {target: source for source, target in post_dominate}
     blocks = vertices - {entry, exit_}
     cdg: set[tuple[str, str]] = set()
