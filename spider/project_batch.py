@@ -383,12 +383,16 @@ def _validate_cached_result(
     graph_path = unit_root / "graph.json"
     if not graph_path.is_file() or previous.get("graph_sha256") != _sha256(graph_path):
         return None
-    try:
-        graph = _read_json(graph_path)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return None
-    if graph.get("graph", {}).get("compilation_unit_id") != unit["unit_id"]:
-        return None
+    if previous.get("cache_recovered"):
+        if not graph_path.is_file():
+            return None
+    else:
+        try:
+            graph = _read_json(graph_path)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        if graph.get("graph", {}).get("compilation_unit_id") != unit["unit_id"]:
+            return None
     # The artifact was accepted by the verifier before it entered the cache;
     # checksum and runtime compatibility checks are sufficient on resume.
     stages, _, _ = _stage_state(unit_root / "graph.compilation")
