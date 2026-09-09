@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from spider import extract
-from spider._graph import _canonicalize_graph
+from spider._graph import _canonicalize_graph, _source_manifest
 from spider.extract import to_dot
 from spider.schema import GRAPH_FORMAT
 from spider.verify import validate
@@ -336,6 +336,12 @@ def test_extract() -> None:
     broken_visibility = deepcopy(attributes)
     next(node for node in broken_visibility["nodes"] if node["label"] == "FUNCTION")["visibility"] = "package"
     assert "invalid visibility attribute" in validate(broken_visibility)
+
+
+def test_source_manifest_preserves_case_distinct_units(tmp_path: Path) -> None:
+    files = {str(tmp_path / "DODO.sol"): b"contract DODO {}", str(tmp_path / "dodo.sol"): b"contract dodo {}"}
+    manifest = _source_manifest(files)
+    assert [Path(item["path"]).name for item in manifest] == ["DODO.sol", "dodo.sol"]
 
 
 if __name__ == "__main__":

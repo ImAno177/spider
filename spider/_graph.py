@@ -45,7 +45,9 @@ def _package_version(distribution: str) -> str:
 
 def _canonical_path(value: str | Path) -> str:
     """Return a deterministic, slash-normalized source-unit identity."""
-    return Path(value).resolve().as_posix()
+    # Keep source-unit case distinct on Windows, where resolve() collapses
+    # ``Foo.sol`` and ``foo.sol`` to the same physical spelling.
+    return Path(value).absolute().as_posix()
 
 
 def _span(obj: Any, sources: dict[str, bytes]) -> dict[str, Any]:
