@@ -376,7 +376,9 @@ def _validate_cached_result(
         return None
     unit_root = output / "units" / unit["unit_id"]
     checksums = previous.get("artifact_checksums")
-    if not isinstance(checksums, dict) or checksums != _artifact_checksums(unit_root):
+    if not isinstance(checksums, dict):
+        return None
+    if not previous.get("cache_recovered") and checksums != _artifact_checksums(unit_root):
         return None
     graph_path = unit_root / "graph.json"
     if not graph_path.is_file() or previous.get("graph_sha256") != _sha256(graph_path):
@@ -398,6 +400,7 @@ def _validate_cached_result(
     reused["cache_hit"] = True
     reused["attempt"] = 0
     reused["runtime_signature"] = runtime["digest"]
+    reused.pop("cache_recovered", None)
     return reused
 
 
