@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import posixpath
 from pathlib import Path
 from typing import Any
 
 from crytic_compile import CryticCompile
 from crytic_compile.platform.solc_standard_json import SolcStandardJson
+from slither.exceptions import SlitherException
 from slither.slither import Slither
 from slither.slithir import convert as _slither_convert
 from slither.slithir.operations import Assignment, HighLevelCall
 from slither.slithir.variables import TupleVariable
+from slither.solc_parsing import slither_compilation_unit_solc as _slither_compilation_unit_solc
 from slither.visitors.slithir import expression_to_slithir as _slither_expression
 
 from ._builder import build_graph as _build_graph
@@ -18,6 +21,138 @@ from ._graph import DOT_REPRESENTATIONS, to_dot
 from .solc import solc_candidates, solidity_sources
 
 __all__ = ["DOT_REPRESENTATIONS", "extract", "to_dot"]
+
+
+def _solidity_tokens(source: str) -> list[tuple[str, str]]:
+    """Tokenize enough Solidity to read named import aliases without regex."""
+    tokens: list[tuple[str, str]] = []
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if character.isspace():
+            index += 1
+            continue
+        if source.startswith("//", index):
+            newline = source.find("\n", index + 2)
+            index = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", index):
+            closing = source.find("*/", index + 2)
+            index = len(source) if closing < 0 else closing + 2
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            end = index + 1
+            while end < len(source):
+                if source[end] == "\\":
+                    end += 2
+                    continue
+                end += 1
+                if source[end - 1] == quote:
+                    break
+            tokens.append(("string", source[index + 1 : end - 1] if source[end - 1 : end] == quote else source[index + 1 : end]))
+            index = end
+            continue
+        if character.isalpha() or character in "_$":
+            end = index + 1
+            while end < len(source) and (source[end].isalnum() or source[end] in "_$"):
+                end += 1
+            tokens.append(("identifier", source[index:end]))
+            index = end
+            continue
+        tokens.append((character, character))
+        index += 1
+    return tokens
+
+
+def _solidity_import_aliases(source: str) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Return import paths and ``(foreign, local)`` named-import pairs."""
+    tokens = _solidity_tokens(source)
+    imports: list[tuple[str, list[tuple[str, str]]]] = []
+    index = 0
+    while index < len(tokens):
+        if tokens[index] != ("identifier", "import"):
+            index += 1
+            continue
+        cursor = index + 1
+        aliases: list[tuple[str, str]] = []
+        if cursor < len(tokens) and tokens[cursor] == ("{", "{"):
+            cursor += 1
+            while cursor < len(tokens) and tokens[cursor] != ("}", "}"):
+                if tokens[cursor][0] != "identifier":
+                    cursor += 1
+                    continue
+                foreign = tokens[cursor][1]
+                local = foreign
+                cursor += 1
+                if cursor < len(tokens) and tokens[cursor] == ("identifier", "as"):
+                    cursor += 1
+                    if cursor >= len(tokens) or tokens[cursor][0] != "identifier":
+                        break
+                    local = tokens[cursor][1]
+                    cursor += 1
+                aliases.append((foreign, local))
+                if cursor < len(tokens) and tokens[cursor] == (",", ","):
+                    cursor += 1
+            if cursor < len(tokens) and tokens[cursor] == ("}", "}"):
+                cursor += 1
+        while cursor < len(tokens) and tokens[cursor][0] != "string" and tokens[cursor] not in {
+            ("identifier", "from"),
+            (";", ";"),
+        }:
+            cursor += 1
+        if cursor < len(tokens) and tokens[cursor] == ("identifier", "from"):
+            cursor += 1
+        if cursor < len(tokens) and tokens[cursor][0] == "string":
+            imports.append((tokens[cursor][1], aliases))
+            index = cursor
+        else:
+            index += 1
+    return imports
+
+
+def _recover_import_alias(local_name: str, import_directive: Any, scope: Any) -> str:
+    """Recover a solc 0.5.x numeric alias from the original import statement."""
+    source_path = Path(scope.filename.absolute)
+    try:
+        source = source_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise SlitherException(f"Cannot recover import alias {local_name!r}: cannot read {source_path}: {error}") from error
+    imported = posixpath.normpath(str(getattr(import_directive, "_filename", "")).replace("\\", "/"))
+    used = posixpath.normpath(str(scope.filename.used).replace("\\", "/"))
+    candidates: list[tuple[int, str]] = []
+    for raw_path, aliases in _solidity_import_aliases(source):
+        raw = posixpath.normpath(raw_path.replace("\\", "/"))
+        resolved = posixpath.normpath(posixpath.join(posixpath.dirname(used), raw))
+        score = 2 if raw == imported or resolved == imported else 0
+        for foreign, local in aliases:
+            if local == local_name:
+                candidates.append((score, foreign))
+    if not candidates:
+        raise SlitherException(f"Cannot recover import alias {local_name!r} in {source_path}")
+    best_score = max(score for score, _ in candidates)
+    names = {name for score, name in candidates if score == best_score}
+    if len(names) != 1:
+        raise SlitherException(f"Ambiguous import alias {local_name!r} in {source_path}: {sorted(names)}")
+    return next(iter(names))
+
+
+_slither_import_aliases = _slither_compilation_unit_solc._handle_import_aliases
+
+
+def _handle_import_aliases_with_recovery(symbol_aliases: list[dict[str, Any]], import_directive: Any, scope: Any) -> None:
+    recovered: list[dict[str, Any]] = []
+    for alias in symbol_aliases:
+        foreign = alias.get("foreign")
+        if isinstance(foreign, int) and not isinstance(foreign, bool):
+            foreign = {"name": _recover_import_alias(alias["local"], import_directive, scope)}
+        recovered.append({**alias, "foreign": foreign})
+    _slither_import_aliases(recovered, import_directive, scope)
+
+
+# solc 0.5.12 emits numeric ``symbolAliases`` references. Slither rejects them
+# even though the original import statement contains the exact source name.
+_slither_compilation_unit_solc._handle_import_aliases = _handle_import_aliases_with_recovery
 
 # Slither 0.11.5 leaves a single-return call type wrapped in a list, then tries
 # to use that list as a dict key. Normalize the representation before its own

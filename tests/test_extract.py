@@ -3,14 +3,29 @@ import random
 import sys
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from spider import extract
 from spider._graph import _canonicalize_graph, _source_manifest
-from spider.extract import to_dot
+from spider.extract import _recover_import_alias, _solidity_import_aliases, to_dot
 from spider.schema import GRAPH_FORMAT
 from spider.verify import validate
+
+
+def test_solc_numeric_import_alias_recovery_uses_source_tokens(tmp_path: Path) -> None:
+    source_path = tmp_path / "App.sol"
+    source_path.write_text(
+        'string constant TEXT = "import {Fake as Bad} from \'fake.sol\';";\n'
+        "/* import {Wrong as AlsoWrong} from 'wrong.sol'; */\n"
+        "import {\n  Foo as Bar,\n  Baz\n} from \"./dep.sol\";\n",
+        encoding="utf-8",
+    )
+    assert _solidity_import_aliases(source_path.read_text(encoding="utf-8")) == [("./dep.sol", [("Foo", "Bar"), ("Baz", "Baz")])]
+    scope = SimpleNamespace(filename=SimpleNamespace(absolute=source_path, used="contracts/App.sol"))
+    directive = SimpleNamespace(_filename=Path("contracts/dep.sol"))
+    assert _recover_import_alias("Bar", directive, scope) == "Foo"
 
 
 def test_extract() -> None:

@@ -186,6 +186,11 @@ Graph metadata exposes the selected settings under
 `compiler_selection.selected_settings`. Pinned settings never receive this
 fallback.
 
+Slither compatibility also recovers named import aliases when legacy solc
+emits a numeric `symbolAliases.foreign` AST reference. Recovery tokenizes the
+original importer while ignoring comments and string literals, then requires a
+single source-backed match; the persisted compiler output remains unchanged.
+
 Consumers should check `graph.format` before loading a graph and record
 `extractor_version` with derived datasets. Additive node or edge labels may
 appear while the format remains `spider-cpg/1.0`; consumers must therefore use

@@ -53,6 +53,12 @@ units, which would replace the original file identities and byte anchors. A
 Standard JSON compilation provides one cross-contract Slither unit while
 preserving the original source paths.
 
+For legacy solc output that encodes a named import alias as a numeric AST
+reference, the extractor recovers the foreign name from the original import
+tokens after comments and string literals are removed. Ambiguous or unreadable
+source statements remain Slither failures; the source bytes and compiler JSON
+are never rewritten.
+
 Version-control directories, build outputs, caches, virtual environments,
 `node_modules`, and generated artifact directories are excluded from initial
 directory discovery. Dependencies under those paths can be supplied through
