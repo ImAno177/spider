@@ -144,6 +144,30 @@ def test_legacy_compiler_uses_combined_json(monkeypatch, tmp_path: Path):
     assert output["sources"]["A.sol"]["ast"]["src"] == "0:0:1"
 
 
+def test_legacy_compiler_failure_keeps_stderr_diagnostics(monkeypatch, tmp_path: Path):
+    class Result:
+        returncode = 1
+        stdout = b""
+        stderr = b"A.sol:1:1: Error: parser failure\n"
+
+    fingerprint = {"requested": "0.4.10", "reported": "0.4.10+commit.9e8cc01b.Linux.g++", "binary_sha256": "test", "usable": True}
+
+    monkeypatch.setattr(compilation, "compiler_command", lambda version, *arguments: ["solc", *arguments])
+    monkeypatch.setattr(compilation, "compiler_fingerprint", lambda version: fingerprint)
+    monkeypatch.setattr(compilation.subprocess, "run", lambda *args, **kwargs: Result())
+
+    plan = {"compiler_candidates": ["0.4.10"], "compiler": {"requested": "0.4.10"}, "settings": {}}
+    standard = {"language": "Solidity", "sources": {"A.sol": {"content": "contract A {}"}}, "settings": {}}
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+
+    with pytest.raises(ValueError, match="parser failure"):
+        _compile_candidates(plan, standard, tmp_path, artifacts)
+    attempts = json.loads((artifacts / "compiler-attempts.json").read_text())
+    assert attempts[0]["diagnostics"] == ["A.sol:1:1: Error: parser failure"]
+    assert attempts[0]["stderr"] == "A.sol:1:1: Error: parser failure"
+
+
 def test_compiler_source_normalization_removes_only_leading_utf8_bom():
     standard = {"language": "Solidity", "sources": {"BOM.sol": {"content": "\ufeffcontract A {}"}, "plain.sol": {"content": "contract B {}"}}, "settings": {}}
 

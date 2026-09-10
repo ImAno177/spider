@@ -205,6 +205,7 @@ def _compile_candidates(
             and cached.get("output_sha256") == hashlib.sha256(output_path.read_bytes()).hexdigest()
             and cached.get("output_sha256") == hashlib.sha256(canonical_output.read_bytes()).hexdigest()
         )
+        stderr_bytes = b""
         try:
             if cache_hit:
                 output = json.loads(output_path.read_text(encoding="utf-8"))
@@ -222,6 +223,7 @@ def _compile_candidates(
                     capture_output=True,
                     cwd=root,
                 )
+                stderr_bytes = result.stderr
                 stdout_path = artifacts / f"solc-{version}{suffix}.stdout"
                 stderr_path = artifacts / f"solc-{version}{suffix}.stderr"
                 stdout_path.write_bytes(result.stdout)
@@ -240,6 +242,11 @@ def _compile_candidates(
                 attempt["diagnostics"] = [item.get("formattedMessage", item.get("message", str(item))) for item in errors[:8]]
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
             attempt.update(success=False, error=f"{type(error).__name__}: {error}")
+            if stderr_bytes:
+                diagnostics = [line for line in stderr_bytes.decode("utf-8", errors="replace").splitlines() if line.strip()]
+                if diagnostics:
+                    attempt["diagnostics"] = diagnostics[:8]
+                    attempt["stderr"] = "\n".join(diagnostics)
         attempts.append(attempt)
         if attempt.get("success"):
             write_json(
