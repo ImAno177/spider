@@ -4,10 +4,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import posixpath
 import subprocess
 import sys
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -64,6 +65,81 @@ def _observed_package_import_contexts(project: Path) -> dict[tuple[str, str], se
                 suffix = "/".join(parts[1:])
             observed[(source_name, prefix)].add(suffix)
     return observed
+
+
+def _package_import_parts(imported: str) -> tuple[str, str] | None:
+    imported = imported.replace("\\", "/")
+    if imported.startswith(("./", "../", "/")):
+        return None
+    parts = imported.split("/")
+    if imported.startswith("@"):
+        if len(parts) < 3:
+            return None
+        return "/".join(parts[:2]) + "/", "/".join(parts[2:])
+    if len(parts) < 2:
+        return None
+    return parts[0] + "/", "/".join(parts[1:])
+
+
+def _reachable_project_package_import_contexts(project: Path, entry: str) -> dict[tuple[str, str], set[str]]:
+    """Scan only the local source closure before external remappings are known.
+
+    A project can contain mutually incompatible package trees. Looking at all
+    Solidity files made one unrelated import poison every entry in that
+    project. Follow local files from this entry and defer external package
+    contents to the locked roots selected below.
+    """
+
+    pending = [(entry.replace("\\", "/"), (project / PurePosixPath(entry)).resolve())]
+    seen: set[Path] = set()
+    observed: dict[tuple[str, str], set[str]] = defaultdict(set)
+    while pending:
+        source_name, source = pending.pop()
+        if source in seen or not source.is_file():
+            continue
+        seen.add(source)
+        try:
+            source_imports = imports(source.read_text(encoding="utf-8", errors="strict"))
+        except (OSError, UnicodeError, ValueError):
+            continue
+        for imported in source_imports:
+            imported = imported.replace("\\", "/")
+            relative = imported.startswith(("./", "../"))
+            logical = posixpath.normpath(posixpath.join(posixpath.dirname(source_name), imported)) if relative else imported
+            if relative and (logical == ".." or logical.startswith("../")):
+                continue
+            if not relative:
+                parts = _package_import_parts(imported)
+                if parts:
+                    prefix, suffix = parts
+                    observed[(source_name, prefix)].add(suffix)
+            candidate = (project / PurePosixPath(logical)).resolve()
+            try:
+                candidate.relative_to(project.resolve())
+            except ValueError:
+                continue
+            if candidate.is_file():
+                pending.append((logical, candidate))
+    return dict(observed)
+
+
+def _observed_package_imports_from_locked_roots(entries: list[dict]) -> dict[str, set[str]]:
+    """Collect package prefixes declared by already selected dependency roots."""
+
+    observed: dict[str, set[str]] = defaultdict(set)
+    for entry in entries:
+        root = Path(entry["root"])
+        for source in sorted(root.rglob("*.sol")):
+            try:
+                source_imports = imports(source.read_text(encoding="utf-8", errors="strict"))
+            except (OSError, UnicodeError, ValueError):
+                continue
+            for imported in source_imports:
+                parts = _package_import_parts(imported)
+                if parts:
+                    prefix, suffix = parts
+                    observed[prefix].add(suffix)
+    return dict(observed)
 
 
 def infer_local_package_remappings(
@@ -259,12 +335,18 @@ def infer_locked_package_remappings(
             if not suffixes:
                 continue
             missing = [suffix for suffix in suffixes if not (root / suffix).is_file()]
-            if missing:
+            available = [suffix for suffix in suffixes if suffix not in missing]
+            if not available:
                 warnings.append(
                     f"locked dependency is missing an observed source: {prefix}"
                     + (f" context={context}" if context else "")
                 )
                 continue
+            if missing:
+                warnings.append(
+                    f"locked dependency omits unrelated observed sources: {prefix}"
+                    + (f" context={context}" if context else "")
+                )
             left = f"{context}:{prefix}" if context else prefix
             resolution.append(f"{left}={root.as_posix().rstrip('/')}/")
             compiler.append(f"{left}={entry['virtual_prefix']}")
@@ -363,7 +445,7 @@ def build(inventory_path: Path, output: Path, dependency_lock: Path | None = Non
     versions = installed_solc_versions()
     source_records = [record for record in inventory["files"] if record.get("kind", "solidity") == "solidity"]
     units, blocked, seen = [], [], {}
-    inferred_by_project: dict[Path, tuple[list[str], list[dict], list[str], list[str], list[str], list[dict], list[dict], list[str]]] = {}
+    inferred_by_entry: dict[tuple[Path, str], tuple[list[str], list[dict], list[str], list[str], list[str], list[dict], list[dict], list[str]]] = {}
     output.mkdir(parents=True, exist_ok=True)
     for record in source_records:
         filename, project_id = record["path"], record["project_id"]
@@ -376,16 +458,33 @@ def build(inventory_path: Path, output: Path, dependency_lock: Path | None = Non
             entry = source.relative_to(project).as_posix()
             build = discover_build(project)
             remappings = list(build["remappings"])
-            cached_inference = inferred_by_project.get(project)
+            cache_key = (project, entry)
+            cached_inference = inferred_by_entry.get(cache_key)
             if cached_inference is None:
-                observed = _observed_package_imports(project)
-                observed_contexts = _observed_package_import_contexts(project)
+                observed_contexts = _reachable_project_package_import_contexts(project, entry)
+                observed: dict[str, set[str]] = defaultdict(set)
+                for (_, prefix), suffixes in observed_contexts.items():
+                    observed[prefix].update(suffixes)
                 local, local_evidence, local_warnings = infer_local_package_remappings(project, remappings, observed)
-                locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings = infer_locked_package_remappings(
-                    remappings + local, observed, lock_entries, project_id, observed_contexts
-                )
+                locked_resolution: list[str] = []
+                locked_compiler: list[str] = []
+                locked_evidence: list[dict] = []
+                selected_dependencies: list[dict] = []
+                locked_warnings: list[str] = []
+                for _ in range(8):
+                    locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings = infer_locked_package_remappings(
+                        remappings + local, observed, lock_entries, project_id, observed_contexts
+                    )
+                    extra = _observed_package_imports_from_locked_roots(selected_dependencies)
+                    changed = False
+                    for prefix, suffixes in extra.items():
+                        before = len(observed[prefix])
+                        observed[prefix].update(suffixes)
+                        changed |= len(observed[prefix]) != before
+                    if not changed:
+                        break
                 cached_inference = (local, local_evidence, local_warnings, locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings)
-                inferred_by_project[project] = cached_inference
+                inferred_by_entry[cache_key] = cached_inference
             inferred, inference_evidence, inference_warnings, locked_resolution, locked_compiler, locked_evidence, selected_dependencies, locked_warnings = cached_inference
             remappings.extend(inferred)
             resolution_remappings = [*remappings, *locked_resolution]

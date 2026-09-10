@@ -105,6 +105,65 @@ def test_locked_external_dependency_is_virtualized_in_plan(tmp_path):
     assert plan["dependencies"][0]["id"] == "npm:openzeppelin-solidity@2.3.0"
 
 
+def test_locked_dependency_resolution_is_local_to_each_entry(tmp_path):
+    spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source_root = tmp_path / "sources"
+    project = source_root / "audit/project"
+    project.mkdir(parents=True)
+    dependency = tmp_path / "deps/package"
+    (dependency / "contracts/math").mkdir(parents=True)
+    (dependency / "contracts/math/SafeMath.sol").write_text(
+        "pragma solidity ^0.4.24; library SafeMath {}", encoding="utf-8"
+    )
+    good = project / "Good.sol"
+    good.write_text(
+        'pragma solidity 0.4.25; import "pkg/contracts/math/SafeMath.sol"; contract Good {}', encoding="utf-8"
+    )
+    bad = project / "Bad.sol"
+    bad.write_text(
+        'pragma solidity 0.4.25; import "pkg/contracts/math/Missing.sol"; contract Bad {}', encoding="utf-8"
+    )
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "source_root": str(source_root),
+                "commit": "fixed",
+                "files": [
+                    {"path": "audit/project/Good.sol", "project_id": "audit/project", "sha256": hashlib.sha256(good.read_bytes()).hexdigest(), "kind": "solidity"},
+                    {"path": "audit/project/Bad.sol", "project_id": "audit/project", "sha256": hashlib.sha256(bad.read_bytes()).hexdigest(), "kind": "solidity"},
+                ],
+            }
+        )
+    )
+    archive = tmp_path / "dependency.tgz"
+    archive.write_bytes(b"locked dependency")
+    lock = tmp_path / "lock.json"
+    lock.write_text(
+        json.dumps(
+            {
+                "schema": "spider-dappscan-dependency-lock/1",
+                "entries": [
+                    {
+                        "id": "npm:pkg@1.0.0",
+                        "prefix": "pkg/",
+                        "root": str(dependency),
+                        "archive": str(archive),
+                        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    }
+                ],
+            }
+        )
+    )
+    summary = module.build(inventory, tmp_path / "plans", lock)
+    assert summary == {"files": 2, "units": 1, "blocked": 1}
+    manifest = json.loads((tmp_path / "plans/manifest.json").read_text())
+    assert manifest["units"][0]["files"] == ["audit/project/Good.sol"]
+    assert manifest["blocked"][0]["files"] == ["audit/project/Bad.sol"]
+
+
 def test_locked_dependency_versions_can_be_scoped_to_projects(tmp_path):
     spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
     module = importlib.util.module_from_spec(spec)
