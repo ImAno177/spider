@@ -57,6 +57,8 @@ def test_constant_state_initializer_ternary_is_folded(tmp_path: Path) -> None:
 contract ConstantTernary {
     enum Network { Mainnet, Kovan }
     Network constant NETWORK = Network.Mainnet;
+    bool constant ENABLED = true;
+    uint256 constant ENABLED_VALUE = ENABLED ? 1 : 2;
     address constant TOKEN = NETWORK == Network.Mainnet
         ? 0x1111111111111111111111111111111111111111
         : 0x2222222222222222222222222222222222222222;
@@ -77,6 +79,7 @@ contract ConstantTernary {
     assert any(node["label"] == "ASSIGNMENT" and "TOKEN" in node["name"] for node in graph["nodes"])
     expected = str(int("44" * 20, 16))
     assert any(node["label"] == "LITERAL" and node.get("value") == expected for node in graph["nodes"])
+    assert any(node["label"] == "LITERAL" and node.get("value") == "1" for node in graph["nodes"])
 
 
 def test_extract() -> None:

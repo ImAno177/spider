@@ -225,19 +225,34 @@ _post_conditional = _slither_expression.ExpressionToSlithIR._post_conditional_ex
 
 
 def _visit_constant_conditional(visitor: Any, expression: Any) -> None:
-    try:
-        folded = _slither_constant_folding(expression.if_expression, "bool").result()
-    except Exception:
-        _visit_conditional(visitor, expression)
-        return
-    value = folded.value
-    if isinstance(value, bool):
-        condition = value
-    elif isinstance(value, str) and value.lower() in {"true", "false"}:
-        condition = value.lower() == "true"
+    condition_expression = expression.if_expression
+    constant_variable = getattr(condition_expression, "value", None)
+    constant_initializer = getattr(constant_variable, "expression", None)
+    if (
+        getattr(constant_variable, "is_constant", False)
+        and getattr(getattr(constant_initializer, "type", None), "__str__", lambda: "")() == "bool"
+    ):
+        literal = getattr(constant_initializer, "converted_value", None)
+        if isinstance(literal, str) and literal.lower() in {"true", "false"}:
+            condition = literal.lower() == "true"
+        else:
+            condition = None
     else:
-        _visit_conditional(visitor, expression)
-        return
+        condition = None
+    if condition is None:
+        try:
+            folded = _slither_constant_folding(condition_expression, "bool").result()
+        except Exception:
+            _visit_conditional(visitor, expression)
+            return
+        value = folded.value
+        if isinstance(value, bool):
+            condition = value
+        elif isinstance(value, str) and value.lower() in {"true", "false"}:
+            condition = value.lower() == "true"
+        else:
+            _visit_conditional(visitor, expression)
+            return
     selected = expression.then_expression if condition else expression.else_expression
     visitor._visit_expression(selected)
     _slither_expression.set_val(expression, _slither_expression.get(selected))
