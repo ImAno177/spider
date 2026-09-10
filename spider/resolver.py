@@ -170,6 +170,63 @@ def _path_inside(path: Path, root: Path) -> bool:
     return True
 
 
+def resolve_symlink_payload(path: Path, project: Path) -> Path | None:
+    """Resolve a regular-file symlink payload without changing its bytes.
+
+    Git snapshots sometimes contain a symlink target as the complete contents
+    of a ``.sol`` regular file.  Treat only an exact single-line relative path
+    as this representation.  The target is resolved from the payload file's
+    directory and must remain inside ``project``.
+    """
+
+    project = Path(project).resolve()
+    current = Path(path).resolve(strict=False)
+    seen: set[Path] = set()
+    while current not in seen:
+        seen.add(current)
+        if current.suffix.lower() != ".sol" or not current.is_file():
+            return None
+        try:
+            payload = current.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        if not payload.startswith(("./", "../")) or any(char in payload for char in "\r\n\x00"):
+            return None
+        payload = payload.replace("\\", "/")
+        target = (current.parent / PurePosixPath(payload)).resolve(strict=False)
+        if not _path_inside(target, project):
+            raise ValueError(
+                f"SYMLINK_PAYLOAD_ESCAPE: source={path!s} payload={payload!r} target={target!s} project={project!s}"
+            )
+        if target.parent.is_dir():
+            matches = [item for item in target.parent.iterdir() if item.name.casefold() == target.name.casefold()]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"SYMLINK_PAYLOAD_AMBIGUOUS: source={path!s} payload={payload!r} candidates={[str(item) for item in matches]}"
+                )
+        if not target.is_file():
+            raise ValueError(
+                f"SYMLINK_PAYLOAD_MISSING: source={path!s} payload={payload!r} target={target!s}"
+            )
+        if target.suffix.lower() != ".sol":
+            raise ValueError(
+                f"SYMLINK_PAYLOAD_NOT_SOLIDITY: source={path!s} payload={payload!r} target={target!s}"
+            )
+        if target in seen:
+            raise ValueError(
+                f"SYMLINK_PAYLOAD_AMBIGUOUS: cyclic regular-file payload source={path!s} target={target!s}"
+            )
+        next_payload = target.read_bytes()
+        try:
+            next_text = next_payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return target
+        if not next_text.startswith(("./", "../")) or any(char in next_text for char in "\r\n\x00"):
+            return target
+        current = target
+    raise ValueError(f"SYMLINK_PAYLOAD_AMBIGUOUS: cyclic regular-file payload source={path!s}")
+
+
 def _format_resolution_error(code: str, importer: str, imported: str, paths: list[Path]) -> ValueError:
     tried = ", ".join(str(path) for path in paths) or "<none>"
     return ValueError(f"{code}: importer={importer!r} import={imported!r} tried=[{tried}]")
@@ -255,7 +312,15 @@ def _dependency_roots(project: Path, current: Path, allowed_roots: list[Path]) -
     return roots
 
 
-def _candidate_file(path: Path, allowed_roots: list[Path], *, importer: str, imported: str, tried: list[Path]) -> Path | None:
+def _candidate_file(
+    path: Path,
+    allowed_roots: list[Path],
+    *,
+    importer: str,
+    imported: str,
+    tried: list[Path],
+    project: Path | None = None,
+) -> Path | None:
     resolved = path.resolve(strict=False)
     tried.append(path)
     if not path.is_file():
@@ -264,6 +329,10 @@ def _candidate_file(path: Path, allowed_roots: list[Path], *, importer: str, imp
         raise ValueError(
             f"SOURCE_OUTSIDE_ROOT: importer={importer!r} import={imported!r} tried=[{path}]"
         )
+    if project is not None and _path_inside(resolved, project):
+        recovered = resolve_symlink_payload(resolved, project)
+        if recovered is not None:
+            return recovered
     return resolved
 
 
@@ -297,6 +366,9 @@ def resolve_closure(project: Path, entries: list[str], remappings: list[str] | N
             raise ValueError(f"SOURCE_OUTSIDE_ROOT: importer='<entry>' import={entry!r} tried=[{path}]")
         if not path.is_file():
             raise _format_resolution_error("MISSING_DEPENDENCY", "<entry>", entry, [path])
+        recovered = resolve_symlink_payload(path, project)
+        if recovered is not None:
+            resolved = recovered
         pending.append((source_name, resolved))
 
     resolved_sources: dict[str, Path] = {}
@@ -335,6 +407,7 @@ def resolve_closure(project: Path, entries: list[str], remappings: list[str] | N
                         importer=source_name,
                         imported=imported,
                         tried=tried,
+                        project=project,
                     )
                     if resolved is not None:
                         candidates.append((logical_name, resolved))
@@ -343,13 +416,20 @@ def resolve_closure(project: Path, entries: list[str], remappings: list[str] | N
             else:
                 if relative_import:
                     logical_name = logical_import
-                    candidate = source_path.parent / PurePosixPath(imported)
+                    logical_path = project / PurePosixPath(source_name)
+                    source_parent = (
+                        logical_path.parent
+                        if logical_path.is_file() and _path_inside(logical_path, project)
+                        else source_path.parent
+                    )
+                    candidate = source_parent / PurePosixPath(imported)
                     resolved = _candidate_file(
                         candidate,
                         allowed_roots,
                         importer=source_name,
                         imported=imported,
                         tried=tried,
+                        project=project,
                     )
                     if resolved is not None:
                         candidates.append((logical_name, resolved))
@@ -362,6 +442,7 @@ def resolve_closure(project: Path, entries: list[str], remappings: list[str] | N
                         importer=source_name,
                         imported=imported,
                         tried=tried,
+                        project=project,
                     )
                     if resolved is not None:
                         candidates.append((logical_name, resolved))
@@ -373,6 +454,7 @@ def resolve_closure(project: Path, entries: list[str], remappings: list[str] | N
                                 importer=source_name,
                                 imported=imported,
                                 tried=tried,
+                                project=project,
                             )
                             if resolved is not None:
                                 candidates.append((logical_name, resolved))
@@ -387,4 +469,4 @@ def resolve_closure(project: Path, entries: list[str], remappings: list[str] | N
     return dict(sorted(resolved_sources.items()))
 
 
-__all__ = ["imports", "resolve_closure"]
+__all__ = ["imports", "resolve_closure", "resolve_symlink_payload"]

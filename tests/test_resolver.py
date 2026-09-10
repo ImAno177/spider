@@ -104,3 +104,37 @@ def test_entry_and_relative_imports_cannot_escape_project_root(tmp_path: Path) -
     _write(project, "contracts/A.sol", 'import "../../outside.sol"; contract A {}')
     with pytest.raises(ValueError, match="source-unit path escapes project root"):
         resolve_closure(project, ["contracts/A.sol"])
+
+
+def test_regular_file_symlink_payload_keeps_logical_source_name(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    alias = _write(project, "aliases/Target.sol", "../real/Target.sol")
+    target = _write(project, "real/Target.sol", 'import "./Dependency.sol"; contract Target {}')
+    dependency = _write(project, "aliases/Dependency.sol", "contract Dependency {}")
+
+    result = resolve_closure(project, ["aliases/Target.sol"])
+
+    assert result["aliases/Target.sol"] == target.resolve()
+    assert result["aliases/Dependency.sol"] == dependency.resolve()
+    assert alias.read_text(encoding="utf-8") == "../real/Target.sol"
+
+
+@pytest.mark.parametrize(
+    ("payload", "target_text", "error"),
+    [
+        ("../../outside.sol", "contract Outside {}", "SYMLINK_PAYLOAD_ESCAPE"),
+        ("../missing.sol", None, "SYMLINK_PAYLOAD_MISSING"),
+        ("../Target.txt", "not Solidity", "SYMLINK_PAYLOAD_NOT_SOLIDITY"),
+    ],
+)
+def test_regular_file_symlink_payload_rejects_invalid_targets(
+    tmp_path: Path, payload: str, target_text: str | None, error: str
+) -> None:
+    project = tmp_path / "project"
+    link = _write(project, "aliases/Target.sol", payload)
+    if target_text is not None:
+        _write(project, f"{payload.rsplit('/', 1)[-1]}", target_text)
+
+    with pytest.raises(ValueError, match=error):
+        resolve_closure(project, ["aliases/Target.sol"])
+    assert link.read_text(encoding="utf-8") == payload
