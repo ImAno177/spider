@@ -208,7 +208,15 @@ def _visit_constant_conditional(visitor: Any, expression: Any) -> None:
     except Exception:
         _visit_conditional(visitor, expression)
         return
-    selected = expression.then_expression if bool(folded.value) else expression.else_expression
+    value = folded.value
+    if isinstance(value, bool):
+        condition = value
+    elif isinstance(value, str) and value.lower() in {"true", "false"}:
+        condition = value.lower() == "true"
+    else:
+        _visit_conditional(visitor, expression)
+        return
+    selected = expression.then_expression if condition else expression.else_expression
     visitor._visit_expression(selected)
     _slither_expression.set_val(expression, _slither_expression.get(selected))
 

@@ -38,6 +38,9 @@ contract ConstantTernary {
     address constant TOKEN = NETWORK == Network.Mainnet
         ? 0x1111111111111111111111111111111111111111
         : 0x2222222222222222222222222222222222222222;
+    address constant KOVAN_TOKEN = NETWORK == Network.Kovan
+        ? 0x3333333333333333333333333333333333333333
+        : 0x4444444444444444444444444444444444444444;
 
     function token() external pure returns (address) {
         return TOKEN;
@@ -50,6 +53,8 @@ contract ConstantTernary {
     assert not validate(graph)
     assert any(node["label"] == "STATE_INITIALIZER" for node in graph["nodes"])
     assert any(node["label"] == "ASSIGNMENT" and "TOKEN" in node["name"] for node in graph["nodes"])
+    expected = str(int("44" * 20, 16))
+    assert any(node["label"] == "LITERAL" and node.get("value") == expected for node in graph["nodes"])
 
 
 def test_extract() -> None:
