@@ -8,6 +8,7 @@ from typing import Any
 
 from crytic_compile import CryticCompile
 from crytic_compile.platform.solc_standard_json import SolcStandardJson
+from slither.core.solidity_types import array_type as _slither_array_type
 from slither.exceptions import SlitherException
 from slither.slither import Slither
 from slither.slithir import convert as _slither_convert
@@ -157,6 +158,24 @@ def _handle_import_aliases_with_recovery(symbol_aliases: list[dict[str, Any]], i
 # solc 0.5.12 emits numeric ``symbolAliases`` references. Slither rejects them
 # even though the original import statement contains the exact source name.
 _slither_compilation_unit_solc._handle_import_aliases = _handle_import_aliases_with_recovery
+
+# Slither 0.11.5 formats some legacy fixed-array literals as ``0x...`` but
+# parses that text with ``int(text)`` while computing storage size. Decode only
+# that representation and leave all other literal semantics to Slither.
+_array_storage_size = _slither_array_type.ArrayType.storage_size.fget
+
+
+def _array_storage_size_with_hex_literals(array_type: Any) -> tuple[int, bool]:
+    length_value = getattr(array_type, "_length_value", None)
+    raw_value = getattr(length_value, "value", None)
+    if isinstance(raw_value, str) and raw_value.lower().startswith("0x"):
+        element_size, _ = array_type.type.storage_size
+        return element_size * int(raw_value, 16), True
+    assert _array_storage_size is not None
+    return _array_storage_size(array_type)
+
+
+_slither_array_type.ArrayType.storage_size = property(_array_storage_size_with_hex_literals)
 
 # Slither 0.11.5 leaves a single-return call type wrapped in a list, then tries
 # to use that list as a dict key. Normalize the representation before its own

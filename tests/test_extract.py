@@ -6,6 +6,9 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
+from slither.core.expressions.literal import Literal
+from slither.core.solidity_types import ArrayType, ElementaryType
+
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from spider import extract
@@ -40,6 +43,11 @@ def test_numeric_import_alias_without_local_name_is_left_unresolved(monkeypatch)
         SimpleNamespace(),
     )
     assert captured == [[{"foreign": 12, "local": None}]]
+
+
+def test_fixed_array_storage_size_accepts_hex_literal() -> None:
+    array_type = ArrayType(ElementaryType("uint256"), Literal("0x100", ElementaryType("uint256")))
+    assert array_type.storage_size == (32 * 256, True)
 
 
 def test_constant_state_initializer_ternary_is_folded(tmp_path: Path) -> None:
