@@ -6,7 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from spider.compilation import SCHEMA, _normalize_source_asts, _slither_recursion_budget, digest, extract_plan, load_plan, write_json
+import spider.compilation as compilation
+from spider.compilation import (
+    SCHEMA,
+    _compile_candidates,
+    _normalize_legacy_combined_output,
+    _normalize_source_asts,
+    _slither_recursion_budget,
+    digest,
+    extract_plan,
+    load_plan,
+    write_json,
+)
 from spider.solc import compiler_fingerprint
 from spider.verify import validate
 
@@ -47,6 +58,88 @@ def test_legacy_solc_import_path_uses_source_unit_name():
     _normalize_source_asts(output)
 
     assert output["sources"]["contracts/v2/Token.sol"]["ast"]["children"][0]["attributes"]["absolutePath"] == "contracts/v1/Base.sol"
+
+
+def test_legacy_combined_output_matches_standard_json_shape():
+    output = {
+        "version": "0.4.10+commit.9e8cc01b.Linux.g++",
+        "sourceList": ["contracts/v2/Token.sol", "contracts/v1/Base.sol"],
+        "sources": {
+            "contracts/v2/Token.sol": {
+                "AST": {
+                    "name": "SourceUnit",
+                    "children": [
+                        {
+                            "name": "ImportDirective",
+                            "attributes": {"file": "../v1/Base.sol"},
+                            "src": "0:21:1",
+                        }
+                    ],
+                }
+            },
+            "contracts/v1/Base.sol": {"AST": {"name": "SourceUnit", "children": []}},
+        },
+        "contracts": {
+            "contracts/v2/Token.sol:Token": {
+                "abi": "[]",
+                "bin": "6000",
+                "bin-runtime": "00",
+                "srcmap": "0:1:1",
+                "srcmap-runtime": "0:1:1",
+            }
+        },
+    }
+
+    _normalize_legacy_combined_output(output)
+
+    token_ast = output["sources"]["contracts/v2/Token.sol"]["ast"]
+    base_ast = output["sources"]["contracts/v1/Base.sol"]["ast"]
+    assert token_ast["src"] == "0:0:1"
+    assert base_ast["src"] == "0:0:2"
+    assert token_ast["children"][0]["attributes"]["absolutePath"] == "contracts/v1/Base.sol"
+    contract = output["contracts"]["contracts/v2/Token.sol"]["Token"]
+    assert contract["abi"] == []
+    assert contract["evm"] == {
+        "bytecode": {"object": "6000", "sourceMap": "0:1:1"},
+        "deployedBytecode": {"object": "00", "sourceMap": "0:1:1"},
+    }
+
+
+def test_legacy_compiler_uses_combined_json(monkeypatch, tmp_path: Path):
+    calls = []
+    combined = {
+        "version": "0.4.10+commit.9e8cc01b.Linux.g++",
+        "sourceList": ["A.sol"],
+        "sources": {"A.sol": {"AST": {"name": "SourceUnit", "children": []}}},
+        "contracts": {"A.sol:A": {"abi": "[]", "bin": "", "bin-runtime": "", "srcmap": "", "srcmap-runtime": ""}},
+    }
+
+    class Result:
+        returncode = 0
+        stdout = json.dumps(combined).encode()
+        stderr = b""
+
+    fingerprint = {"requested": "0.4.10", "reported": "0.4.10+commit.9e8cc01b.Linux.g++", "binary_sha256": "test", "usable": True}
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Result()
+
+    monkeypatch.setattr(compilation, "compiler_command", lambda version, *arguments: ["solc", *arguments])
+    monkeypatch.setattr(compilation, "compiler_fingerprint", lambda version: fingerprint)
+    monkeypatch.setattr(compilation.subprocess, "run", fake_run)
+
+    plan = {"compiler_candidates": ["0.4.10"], "compiler": {"requested": "0.4.10"}, "settings": {}}
+    standard = {"language": "Solidity", "sources": {"A.sol": {"content": "contract A {}"}}, "settings": {}}
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    version, output, _, attempts, _ = _compile_candidates(plan, standard, tmp_path, artifacts)
+
+    assert version == "0.4.10"
+    assert attempts[0]["success"]
+    assert calls[0][0] == ["solc", "--combined-json", "abi,ast,bin,bin-runtime,srcmap,srcmap-runtime", "A.sol"]
+    assert calls[0][1]["input"] is None
+    assert output["sources"]["A.sol"]["ast"]["src"] == "0:0:1"
 
 
 def test_plan_compile_and_mutation(tmp_path: Path):

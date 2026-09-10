@@ -20,6 +20,7 @@ from .solc import compiler_command, compiler_fingerprint
 
 SCHEMA = "spider-compilation-plan/1"
 _SLITHER_RECURSION_LIMIT = 3000
+_LEGACY_COMBINED_JSON_FIELDS = "abi,ast,bin,bin-runtime,srcmap,srcmap-runtime"
 
 
 @contextmanager
@@ -68,6 +69,80 @@ def _normalize_source_asts(output: dict[str, Any]) -> None:
                     pending.extend(item.values())
                 elif isinstance(item, list):
                     pending.extend(item)
+
+
+def _legacy_combined_json(version: str) -> bool:
+    try:
+        release = tuple(int(part) for part in version.split(".")[:3])
+    except (TypeError, ValueError):
+        return False
+    return release < (0, 4, 11)
+
+
+def _normalize_legacy_combined_output(output: dict[str, Any]) -> None:
+    """Convert solc <0.4.11 combined-json output to the standard-json shape."""
+    source_names = set(output.get("sources", {}))
+    source_list = output.get("sourceList", [])
+    source_ids = {name: index + 1 for index, name in enumerate(source_list)}
+    normalized_sources: dict[str, dict[str, Any]] = {}
+
+    for source_name, record in output.get("sources", {}).items():
+        ast = record.get("AST")
+        if not isinstance(ast, dict):
+            raise ValueError(f"legacy solc output missing AST for {source_name}")
+        pending: list[Any] = [ast]
+        source_id: int | None = None
+        while pending:
+            item = pending.pop()
+            if isinstance(item, dict):
+                raw_source = item.get("src")
+                if source_id is None and isinstance(raw_source, str):
+                    try:
+                        candidate = int(raw_source.rsplit(":", 1)[-1])
+                    except ValueError:
+                        candidate = -1
+                    if candidate >= 0:
+                        source_id = candidate
+                if item.get("name") == "ImportDirective":
+                    attributes = item.get("attributes")
+                    raw_path = attributes.get("file") if isinstance(attributes, dict) else None
+                    if isinstance(raw_path, str) and isinstance(attributes, dict) and not attributes.get("absolutePath"):
+                        resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source_name), raw_path.replace("\\", "/")))
+                        if resolved in source_names:
+                            attributes["absolutePath"] = resolved
+                pending.extend(item.values())
+            elif isinstance(item, list):
+                pending.extend(item)
+        if "src" not in ast:
+            source_id = source_id if source_id is not None else source_ids.get(source_name)
+            if source_id is not None:
+                ast["src"] = f"0:0:{source_id}"
+        normalized_sources[source_name] = {"ast": ast}
+
+    normalized_contracts: dict[str, dict[str, Any]] = {}
+    for qualified_name, record in output.get("contracts", {}).items():
+        if ":" not in qualified_name:
+            raise ValueError(f"legacy solc output has invalid contract key: {qualified_name}")
+        source_name, contract_name = qualified_name.rsplit(":", 1)
+        abi = record.get("abi", "[]")
+        if isinstance(abi, str):
+            abi = json.loads(abi)
+        normalized_contracts.setdefault(source_name, {})[contract_name] = {
+            "abi": abi,
+            "evm": {
+                "bytecode": {
+                    "object": record.get("bin", ""),
+                    "sourceMap": record.get("srcmap", ""),
+                },
+                "deployedBytecode": {
+                    "object": record.get("bin-runtime", ""),
+                    "sourceMap": record.get("srcmap-runtime", ""),
+                },
+            },
+        }
+
+    output["sources"] = normalized_sources
+    output["contracts"] = normalized_contracts
 
 
 def _via_ir_supported(version: str) -> bool:
@@ -119,9 +194,15 @@ def _compile_candidates(
                 output = json.loads(output_path.read_text(encoding="utf-8"))
                 returncode = cached["returncode"]
             else:
+                legacy = _legacy_combined_json(version)
+                command = (
+                    compiler_command(version, "--combined-json", _LEGACY_COMBINED_JSON_FIELDS, *input_standard["sources"])
+                    if legacy
+                    else compiler_command(version, "--standard-json")
+                )
                 result = subprocess.run(
-                    compiler_command(version, "--standard-json"),
-                    input=json.dumps(input_standard).encode(),
+                    command,
+                    input=None if legacy else json.dumps(input_standard).encode(),
                     capture_output=True,
                     cwd=root,
                 )
@@ -130,6 +211,8 @@ def _compile_candidates(
                 stdout_path.write_bytes(result.stdout)
                 stderr_path.write_bytes(result.stderr)
                 output = json.loads(result.stdout)
+                if legacy:
+                    _normalize_legacy_combined_output(output)
                 returncode = result.returncode
                 write_json(output_path, output)
                 write_json(cache_path, {"key": cache_key, "returncode": returncode, "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest()})
