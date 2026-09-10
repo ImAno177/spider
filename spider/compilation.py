@@ -57,7 +57,7 @@ def _via_ir_supported(version: str) -> bool:
 def _compile_candidates(
     plan: dict[str, Any], standard: dict[str, Any], root: Path, artifacts: Path
 ) -> tuple[str, dict[str, Any], bool, list[dict[str, Any]], dict[str, Any]]:
-    """Try pinned settings, then an explicit via-IR recovery when it is safe."""
+    """Try pinned settings, then explicit optimizer/via-IR recoveries when safe."""
     from solc_select.solc_select import artifact_path
 
     candidates = plan.get("compiler_candidates") or [plan["compiler"]["requested"]]
@@ -145,6 +145,15 @@ def _compile_candidates(
     stack_error = any("Stack too deep" in diagnostic for attempt in attempts for diagnostic in attempt.get("diagnostics", []))
     pinned_settings = plan.get("settings", {})
     if stack_error and "optimizer" not in pinned_settings and "viaIR" not in pinned_settings:
+        recovery_standard = deepcopy(standard)
+        recovery_standard["settings"]["optimizer"] = {"enabled": True, "runs": 200}
+        write_json(artifacts / "input-recovery-optimizer.json", recovery_standard)
+        for version in candidates:
+            selected = run(version, recovery_standard, "optimizer")
+            if selected is not None:
+                write_json(artifacts / "compiler-attempts.json", attempts)
+                return (*selected, attempts, recovery_standard)
+
         recovery_standard = deepcopy(standard)
         recovery_standard["settings"]["optimizer"] = {"enabled": True, "runs": 200}
         recovery_standard["settings"]["viaIR"] = True

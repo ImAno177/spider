@@ -87,3 +87,35 @@ def test_compiler_candidates_fallback_records_selected_release(tmp_path: Path):
     assert graph["graph"]["compiler_selection"]["selected"]["requested"] == "0.8.25"
     assert len(graph["graph"]["compiler_selection"]["attempts"]) == 2
     assert not validate(graph)
+
+
+def test_optimizer_recovery_records_unpinned_stack_fix(tmp_path: Path):
+    parameters = ", ".join(f"bytes memory a{i}" for i in range(12))
+    arguments = ", ".join(f"a{i}" for i in range(12))
+    source = tmp_path / "OptimizerRecovery.sol"
+    source.write_text(
+        "pragma solidity 0.6.12; pragma experimental ABIEncoderV2; "
+        f"contract OptimizerRecovery {{ function encode({parameters}) public pure returns (bytes memory) "
+        f"{{ return abi.encode({arguments}); }} }}",
+        encoding="utf-8",
+    )
+    plan = {
+        "schema": SCHEMA,
+        "project_id": "audit/optimizer-recovery",
+        "sources": {"OptimizerRecovery.sol": {"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}},
+        "entries": ["OptimizerRecovery.sol"],
+        "settings": {},
+        "compiler": compiler_fingerprint("0.6.12"),
+        "dependencies": [],
+    }
+    plan["unit_id"] = digest(plan)
+    path = tmp_path / "optimizer-plan.json"
+    write_json(path, plan)
+
+    graph = extract_plan(path, tmp_path / "compilation")
+    attempts = graph["graph"]["compiler_selection"]["attempts"]
+    assert attempts[0]["success"] is False
+    assert attempts[1]["recovery"] == "optimizer"
+    assert attempts[1]["success"] is True
+    assert graph["graph"]["compiler_selection"]["selected_settings"]["optimizer"] == {"enabled": True, "runs": 200}
+    assert not validate(graph)
