@@ -1,13 +1,23 @@
 import hashlib
 import json
+import sys
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-from spider.compilation import SCHEMA, digest, extract_plan, load_plan, write_json
+from spider.compilation import SCHEMA, _slither_recursion_budget, digest, extract_plan, load_plan, write_json
 from spider.solc import compiler_fingerprint
 from spider.verify import validate
+
+
+def test_slither_recursion_budget_is_temporary(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sys, "getrecursionlimit", lambda: 1000)
+    monkeypatch.setattr(sys, "setrecursionlimit", calls.append)
+    with _slither_recursion_budget():
+        pass
+    assert calls == [3000, 1000]
 
 
 def test_plan_compile_and_mutation(tmp_path: Path):

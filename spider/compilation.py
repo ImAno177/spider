@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -15,6 +17,21 @@ from crytic_compile.platform.solc_standard_json import SolcStandardJson, parse_s
 from .solc import compiler_fingerprint
 
 SCHEMA = "spider-compilation-plan/1"
+_SLITHER_RECURSION_LIMIT = 3000
+
+
+@contextmanager
+def _slither_recursion_budget():
+    """Give Slither enough stack for deeply nested generated Solidity expressions."""
+    previous = sys.getrecursionlimit()
+    raised = previous < _SLITHER_RECURSION_LIMIT
+    if raised:
+        sys.setrecursionlimit(_SLITHER_RECURSION_LIMIT)
+    try:
+        yield
+    finally:
+        if raised:
+            sys.setrecursionlimit(previous)
 
 
 def digest(value: Any) -> str:
@@ -171,11 +188,12 @@ def extract_plan(plan_path: Path, artifacts: Path) -> dict[str, Any]:
             raise ValueError("compiler source/AST coverage mismatch")
         status["solc_ok"] = True
         stage = "slither"
-        compilation = CryticCompile(_CompiledJson(standard, output, version), solc_working_dir=str(root))
-        slither = Slither(compilation)
-        status["slither_ok"] = True
-        stage = "graph"
-        graph = _build_graph(slither, root, source_bytes, [root / n for n in sorted(plan["sources"])], version, "", True)
+        with _slither_recursion_budget():
+            compilation = CryticCompile(_CompiledJson(standard, output, version), solc_working_dir=str(root))
+            slither = Slither(compilation)
+            status["slither_ok"] = True
+            stage = "graph"
+            graph = _build_graph(slither, root, source_bytes, [root / n for n in sorted(plan["sources"])], version, "", True)
         stable_attempts = [{key: value for key, value in attempt.items() if key != "cache_hit"} for attempt in compiler_attempts]
         graph["graph"].update(
             compilation_unit_id=plan["unit_id"],
