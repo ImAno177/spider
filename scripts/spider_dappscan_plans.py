@@ -156,7 +156,11 @@ def infer_local_package_remappings(
     unique project-local target; no corpus-wide or basename search is used.
     """
 
-    observed = observed or _observed_package_imports(project)
+    # An empty per-entry observation is meaningful: it means this local
+    # closure has no package imports.  Falling back on a whole-project scan
+    # here made every such entry rescan all 21k sources.
+    if observed is None:
+        observed = _observed_package_imports(project)
     existing_prefixes = {_remapping_prefix(item) for item in existing}
     inferred: list[str] = []
     evidence: list[dict] = []
