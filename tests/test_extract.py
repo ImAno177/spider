@@ -1,4 +1,5 @@
 import hashlib
+import importlib
 import random
 import sys
 from copy import deepcopy
@@ -13,6 +14,8 @@ from spider.extract import _recover_import_alias, _solidity_import_aliases, to_d
 from spider.schema import GRAPH_FORMAT
 from spider.verify import validate
 
+extract_module = importlib.import_module("spider.extract")
+
 
 def test_solc_numeric_import_alias_recovery_uses_source_tokens(tmp_path: Path) -> None:
     source_path = tmp_path / "App.sol"
@@ -26,6 +29,17 @@ def test_solc_numeric_import_alias_recovery_uses_source_tokens(tmp_path: Path) -
     scope = SimpleNamespace(filename=SimpleNamespace(absolute=source_path, used="contracts/App.sol"))
     directive = SimpleNamespace(_filename=Path("contracts/dep.sol"))
     assert _recover_import_alias("Bar", directive, scope) == "Foo"
+
+
+def test_numeric_import_alias_without_local_name_is_left_unresolved(monkeypatch) -> None:
+    captured = []
+    monkeypatch.setattr(extract_module, "_slither_import_aliases", lambda aliases, directive, scope: captured.append(aliases))
+    extract_module._handle_import_aliases_with_recovery(
+        [{"foreign": 12, "local": None}],
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+    assert captured == [[{"foreign": 12, "local": None}]]
 
 
 def test_constant_state_initializer_ternary_is_folded(tmp_path: Path) -> None:

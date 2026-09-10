@@ -145,7 +145,10 @@ def _handle_import_aliases_with_recovery(symbol_aliases: list[dict[str, Any]], i
     recovered: list[dict[str, Any]] = []
     for alias in symbol_aliases:
         foreign = alias.get("foreign")
-        if isinstance(foreign, int) and not isinstance(foreign, bool):
+        local_name = alias.get("local")
+        # Slither treats a missing local name as an ordinary, non-renamed
+        # import. There is no source alias to recover in that case.
+        if isinstance(foreign, int) and not isinstance(foreign, bool) and isinstance(local_name, str) and local_name:
             foreign = {"name": _recover_import_alias(alias["local"], import_directive, scope)}
         recovered.append({**alias, "foreign": foreign})
     _slither_import_aliases(recovered, import_directive, scope)
