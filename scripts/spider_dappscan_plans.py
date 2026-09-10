@@ -81,7 +81,11 @@ def _package_import_parts(imported: str) -> tuple[str, str] | None:
     return parts[0] + "/", "/".join(parts[1:])
 
 
-def _reachable_project_package_import_contexts(project: Path, entry: str) -> dict[tuple[str, str], set[str]]:
+def _reachable_project_package_import_contexts(
+    project: Path,
+    entry: str,
+    remappings: list[str] | None = None,
+) -> dict[tuple[str, str], set[str]]:
     """Scan only the local source closure before external remappings are known.
 
     A project can contain mutually incompatible package trees. Looking at all
@@ -89,6 +93,20 @@ def _reachable_project_package_import_contexts(project: Path, entry: str) -> dic
     project. Follow local files from this entry and defer external package
     contents to the locked roots selected below.
     """
+
+    project = project.resolve()
+    parsed_remappings: list[tuple[str, str, Path]] = []
+    for raw in remappings or []:
+        if "=" not in raw:
+            continue
+        left, target = raw.split("=", 1)
+        context, separator, prefix = left.rpartition(":")
+        if not separator:
+            context, prefix = "", left
+        target_path = Path(target.replace("\\", "/"))
+        if not target_path.is_absolute():
+            target_path = project / target_path
+        parsed_remappings.append((context.rstrip("/"), prefix.rstrip("/") + "/", target_path.resolve()))
 
     pending = [(entry.replace("\\", "/"), (project / PurePosixPath(entry)).resolve())]
     seen: set[Path] = set()
@@ -113,9 +131,31 @@ def _reachable_project_package_import_contexts(project: Path, entry: str) -> dic
                 if parts:
                     prefix, suffix = parts
                     observed[(source_name, prefix)].add(suffix)
-            candidate = (project / PurePosixPath(logical)).resolve()
+            candidate = None
+            if not relative:
+                matches = [
+                    item
+                    for item in parsed_remappings
+                    if imported.startswith(item[1])
+                    and (not item[0] or source_name == item[0] or source_name.startswith(item[0] + "/"))
+                ]
+                if matches:
+                    best = max((len(item[1]), len(item[0])) for item in matches)
+                    matches = [item for item in matches if (len(item[1]), len(item[0])) == best]
+                    for context, prefix, target in matches:
+                        target_candidate = (target / PurePosixPath(imported[len(prefix):].lstrip("/"))).resolve()
+                        try:
+                            target_candidate.relative_to(project)
+                        except ValueError:
+                            continue
+                        if target_candidate.is_file():
+                            logical = (target_candidate.relative_to(project)).as_posix()
+                            candidate = target_candidate
+                            break
+            if candidate is None:
+                candidate = (project / PurePosixPath(logical)).resolve()
             try:
-                candidate.relative_to(project.resolve())
+                candidate.relative_to(project)
             except ValueError:
                 continue
             if candidate.is_file():
@@ -468,6 +508,33 @@ def build(inventory_path: Path, output: Path, dependency_lock: Path | None = Non
                 for (_, prefix), suffixes in observed_contexts.items():
                     observed[prefix].update(suffixes)
                 local, local_evidence, local_warnings = infer_local_package_remappings(project, remappings, observed)
+                # Keep discovering only the entry's local closure after each
+                # inferred alias; unrelated project packages must stay out.
+                for _ in range(8):
+                    expanded_contexts = _reachable_project_package_import_contexts(
+                        project, entry, [*remappings, *local]
+                    )
+                    changed = False
+                    for key, suffixes in expanded_contexts.items():
+                        before = len(observed_contexts.get(key, set()))
+                        observed_contexts.setdefault(key, set()).update(suffixes)
+                        changed |= len(observed_contexts[key]) != before
+                        prefix = key[1]
+                        previous = len(observed[prefix])
+                        observed[prefix].update(suffixes)
+                        changed |= len(observed[prefix]) != previous
+                    inferred, evidence, warnings = infer_local_package_remappings(
+                        project, [*remappings, *local], observed
+                    )
+                    new_inferred = [item for item in inferred if item not in local]
+                    if new_inferred:
+                        new_prefixes = {_remapping_prefix(item) for item in new_inferred}
+                        local.extend(new_inferred)
+                        local_evidence.extend(item for item in evidence if item["prefix"] in new_prefixes)
+                        local_warnings.extend(warnings)
+                        changed = True
+                    if not changed:
+                        break
                 locked_resolution: list[str] = []
                 locked_compiler: list[str] = []
                 locked_evidence: list[dict] = []

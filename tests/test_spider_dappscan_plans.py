@@ -43,6 +43,52 @@ def test_infer_local_monorepo_package_remapping_requires_complete_target(tmp_pat
     assert module.infer_local_package_remappings(project, inferred)[0] == []
 
 
+def test_plan_follows_transitive_local_package_remappings(tmp_path):
+    spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source_root = tmp_path / "sources"
+    project = source_root / "audit/project"
+    (project / "contracts/utils/contracts/src").mkdir(parents=True)
+    (project / "contracts/base/contracts/src").mkdir(parents=True)
+    (project / "contracts/base/contracts/src/Base.sol").write_text(
+        "pragma solidity 0.4.25; library Base {}", encoding="utf-8"
+    )
+    (project / "contracts/utils/contracts/src/Lib.sol").write_text(
+        'pragma solidity 0.4.25; import "@0x/contracts-base/contracts/src/Base.sol"; library Lib {}',
+        encoding="utf-8",
+    )
+    source = project / "App.sol"
+    source.write_text(
+        'pragma solidity 0.4.25; import "@0x/contracts-utils/contracts/src/Lib.sol"; contract App {}',
+        encoding="utf-8",
+    )
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "source_root": str(source_root),
+                "commit": "fixed",
+                "files": [
+                    {
+                        "path": "audit/project/App.sol",
+                        "project_id": "audit/project",
+                        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                        "kind": "solidity",
+                    }
+                ],
+            }
+        )
+    )
+    summary = module.build(inventory, tmp_path / "plans")
+    assert summary == {"files": 1, "units": 1, "blocked": 0}
+    plan = json.loads(next((tmp_path / "plans/plans").glob("*.json")).read_text())
+    assert "contracts/utils/contracts/src/Lib.sol" in plan["sources"]
+    assert "contracts/base/contracts/src/Base.sol" in plan["sources"]
+    assert "@0x/contracts-base/=contracts/base/" in plan["settings"]["remappings"]
+    assert "@0x/contracts-utils/=contracts/utils/" in plan["settings"]["remappings"]
+
+
 def test_locked_external_dependency_is_virtualized_in_plan(tmp_path):
     spec = importlib.util.spec_from_file_location("dappscan_plans", Path(__file__).parents[1] / "scripts/spider_dappscan_plans.py")
     module = importlib.util.module_from_spec(spec)
