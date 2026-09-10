@@ -59,6 +59,11 @@ tokens after comments and string literals are removed. Ambiguous or unreadable
 source statements remain Slither failures; the source bytes and compiler JSON
 are never rewritten.
 
+Slither's synthetic state-initializer function does not run its normal ternary
+rewrite. Spider folds a state-initializer ternary only when Slither's own
+constant folder proves the condition; a runtime-dependent ternary still fails
+with Slither's original unsupported-semantics error.
+
 Version-control directories, build outputs, caches, virtual environments,
 `node_modules`, and generated artifact directories are excluded from initial
 directory discovery. Dependencies under those paths can be supplied through

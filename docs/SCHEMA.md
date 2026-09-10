@@ -191,6 +191,11 @@ emits a numeric `symbolAliases.foreign` AST reference. Recovery tokenizes the
 original importer while ignoring comments and string literals, then requires a
 single source-backed match; the persisted compiler output remains unchanged.
 
+For synthetic state-initializer functions, Spider folds a conditional
+expression only after Slither's `ConstantFolding` proves its condition is a
+compile-time boolean. This preserves the selected compiler value while leaving
+runtime-dependent conditionals as Slither failures.
+
 Consumers should check `graph.format` before loading a graph and record
 `extractor_version` with derived datasets. Additive node or edge labels may
 appear while the format remains `spider-cpg/1.0`; consumers must therefore use

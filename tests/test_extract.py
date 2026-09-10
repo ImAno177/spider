@@ -28,6 +28,30 @@ def test_solc_numeric_import_alias_recovery_uses_source_tokens(tmp_path: Path) -
     assert _recover_import_alias("Bar", directive, scope) == "Foo"
 
 
+def test_constant_state_initializer_ternary_is_folded(tmp_path: Path) -> None:
+    source = tmp_path / "ConstantTernary.sol"
+    source.write_text(
+        """pragma solidity 0.6.12;
+contract ConstantTernary {
+    enum Network { Mainnet, Kovan }
+    Network constant NETWORK = Network.Mainnet;
+    address constant TOKEN = NETWORK == Network.Mainnet
+        ? 0x1111111111111111111111111111111111111111
+        : 0x2222222222222222222222222222222222222222;
+
+    function token() external pure returns (address) {
+        return TOKEN;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    graph = extract(source)
+    assert not validate(graph)
+    assert any(node["label"] == "STATE_INITIALIZER" for node in graph["nodes"])
+    assert any(node["label"] == "ASSIGNMENT" and "TOKEN" in node["name"] for node in graph["nodes"])
+
+
 def test_extract() -> None:
     graph = extract(Path(__file__).parent / "fixtures" / "Bank.sol")
     labels = {node["label"] for node in graph["nodes"]}

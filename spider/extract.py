@@ -14,6 +14,7 @@ from slither.slithir import convert as _slither_convert
 from slither.slithir.operations import Assignment, HighLevelCall
 from slither.slithir.variables import TupleVariable
 from slither.solc_parsing import slither_compilation_unit_solc as _slither_compilation_unit_solc
+from slither.visitors.expression.constants_folding import ConstantFolding as _slither_constant_folding
 from slither.visitors.slithir import expression_to_slithir as _slither_expression
 
 from ._builder import build_graph as _build_graph
@@ -191,6 +192,35 @@ def _assign_single_tuple_call(visitor: Any, expression: Any) -> None:
 
 
 _slither_expression.ExpressionToSlithIR._post_assignement_operation = _assign_single_tuple_call
+
+
+# Slither does not rewrite ternaries in its synthetic state-initializer
+# function.  Collapse only conditions proven constant by Slither itself; a
+# runtime-dependent ternary keeps the upstream SlithIR error instead of being
+# approximated.
+_visit_conditional = _slither_expression.ExpressionToSlithIR._visit_conditional_expression
+_post_conditional = _slither_expression.ExpressionToSlithIR._post_conditional_expression
+
+
+def _visit_constant_conditional(visitor: Any, expression: Any) -> None:
+    try:
+        folded = _slither_constant_folding(expression.if_expression, "bool").result()
+    except Exception:
+        _visit_conditional(visitor, expression)
+        return
+    selected = expression.then_expression if bool(folded.value) else expression.else_expression
+    visitor._visit_expression(selected)
+    _slither_expression.set_val(expression, _slither_expression.get(selected))
+
+
+def _post_constant_conditional(visitor: Any, expression: Any) -> None:
+    if _slither_expression.key in expression.context:
+        return
+    _post_conditional(visitor, expression)
+
+
+_slither_expression.ExpressionToSlithIR._visit_conditional_expression = _visit_constant_conditional
+_slither_expression.ExpressionToSlithIR._post_conditional_expression = _post_constant_conditional
 
 
 def _project_compilation(
