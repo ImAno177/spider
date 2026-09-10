@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -80,6 +81,28 @@ def test_compiler_fingerprint_rejects_prerelease_and_tracks_binary(tmp_path: Pat
     stable = solc.compiler_fingerprint("0.4.15")
     assert stable["reported"].startswith("0.4.15+commit") and stable["usable"]
     assert stable["binary_sha256"] != nightly["binary_sha256"]
+    solc.compiler_fingerprint.cache_clear()
+
+
+def test_explicit_0415_wsl_release_transport(tmp_path: Path, monkeypatch) -> None:
+    binary = tmp_path / "solc-0.4.15-linux"
+    binary.write_bytes(b"stable-linux")
+    monkeypatch.setenv(solc._SOLC_0415_LINUX_ENV, str(binary))
+    command = solc.compiler_command("0.4.15", "--version")
+    if os.name == "nt":
+        assert command[:2] == ["wsl.exe", "--"]
+        assert command[2].startswith("/mnt/")
+    else:
+        assert command[0] == str(binary.resolve())
+    solc.compiler_fingerprint.cache_clear()
+    monkeypatch.setattr(
+        solc.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "Version: 0.4.15+commit.8b45bddb.Linux.g++\n", ""),
+    )
+    fingerprint = solc.compiler_fingerprint("0.4.15")
+    assert fingerprint["transport"] == "wsl"
+    assert fingerprint["usable"] is True
     solc.compiler_fingerprint.cache_clear()
 
 

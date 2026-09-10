@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from spider.build_environment import discover_build
 from spider.compilation import SCHEMA, digest, write_json
 from spider.resolver import imports, resolve_closure
-from spider.solc import compatible_project_versions, compiler_fingerprint, installed_solc_versions, pragma_expressions
+from spider.solc import compatible_project_versions, compiler_command, compiler_fingerprint, installed_solc_versions, pragma_expressions
 
 
 def _remapping_prefix(value: str) -> str:
@@ -395,8 +395,6 @@ def _virtualize_locked_closure(closure: dict[str, Path], lock_entries: list[dict
 
 def group_units(units: list[dict], output: Path) -> list[dict]:
     """Keep a project group only when its combined code generation succeeds."""
-    from solc_select.solc_select import artifact_path
-
     groups = defaultdict(list)
     for unit in units:
         plan = json.loads(Path(unit["plan"]).read_text())
@@ -425,7 +423,7 @@ def group_units(units: list[dict], output: Path) -> list[dict]:
         standard = {"language": "Solidity", "sources": {n: {"content": Path(r["path"]).read_bytes().decode("utf-8")} for n, r in merged.items()}, "settings": settings}
         probe_path = output / "group-probes" / (plan["unit_id"] + ".json")
         try:
-            completed = subprocess.run([str(artifact_path(plan["compiler"]["requested"])), "--standard-json"], input=json.dumps(standard).encode(), capture_output=True, timeout=600)
+            completed = subprocess.run(compiler_command(plan["compiler"]["requested"], "--standard-json"), input=json.dumps(standard).encode(), capture_output=True, timeout=600)
             compiled = json.loads(completed.stdout)
             errors = [e for e in compiled.get("errors", []) if e.get("severity") == "error"]
             success = not completed.returncode and not errors and set(compiled.get("sources", {})) == set(merged)

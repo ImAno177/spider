@@ -20,6 +20,7 @@ _IGNORED_PROJECT_DIRS = {".git", ".hg", ".svn", ".venv", "artifacts", "build", "
 _AUTHENTICATED_RELEASE_DIGESTS = {
     "0.4.15": {"9e22db7ba9881a4fa43ee38404f4aba531f7e4b84a8ecf5e9e423062e45564fe"},
 }
+_SOLC_0415_LINUX_ENV = "SPIDER_SOLC_0415_LINUX"
 
 
 def _without_comments(source: str) -> str:
@@ -146,10 +147,11 @@ def compatible_project_versions(expressions: list[str], versions: list[tuple[int
 
 @lru_cache(maxsize=None)
 def compiler_fingerprint(requested: str) -> dict[str, str | bool]:
-    binary = artifact_path(requested)
+    override = _release_override(requested)
+    binary = override or artifact_path(requested)
     digest = hashlib.sha256(binary.read_bytes()).hexdigest() if binary.is_file() else ""
     try:
-        result = subprocess.run([str(binary), "--version"], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(compiler_command(requested, "--version"), capture_output=True, text=True, timeout=30)
         match = VERSION_RE.search(result.stdout + result.stderr)
     except (OSError, subprocess.SubprocessError):
         match = None
@@ -161,12 +163,44 @@ def compiler_fingerprint(requested: str) -> dict[str, str | bool]:
         and match.group(1) == requested
         and digest in _AUTHENTICATED_RELEASE_DIGESTS.get(requested, set())
     )
-    return {
+    fingerprint = {
         "requested": requested,
         "reported": reported,
         "binary_sha256": digest,
         "usable": release or authenticated_release,
     }
+    if override is not None:
+        fingerprint["transport"] = "wsl"
+    return fingerprint
+
+
+def _release_override(requested: str) -> Path | None:
+    """Return a pinned alternate release binary when explicitly configured."""
+
+    if requested != "0.4.15":
+        return None
+    value = os.environ.get(_SOLC_0415_LINUX_ENV, "").strip()
+    if not value or value.startswith("/"):
+        return None
+    path = Path(value).expanduser().resolve()
+    return path if path.is_file() else None
+
+
+def _windows_to_wsl(path: Path) -> str:
+    drive = path.drive[:1].lower()
+    if not drive:
+        raise ValueError(f"WSL compiler path must be on a Windows drive: {path}")
+    relative = path.relative_to(Path(path.anchor))
+    return "/mnt/" + drive + "/" + "/".join(relative.parts)
+
+
+def compiler_command(requested: str, *arguments: str) -> list[str]:
+    """Build the pinned compiler command, including the explicit WSL release transport."""
+
+    override = _release_override(requested)
+    if override is not None and os.name == "nt":
+        return ["wsl.exe", "--", _windows_to_wsl(override), *arguments]
+    return [str(override or artifact_path(requested)), *arguments]
 
 
 def compiler_fingerprints() -> list[dict[str, str | bool]]:

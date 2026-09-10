@@ -15,7 +15,7 @@ from crytic_compile.compilation_unit import CompilationUnit
 from crytic_compile.compiler.compiler import CompilerVersion
 from crytic_compile.platform.solc_standard_json import SolcStandardJson, parse_standard_json_output
 
-from .solc import compiler_fingerprint
+from .solc import compiler_command, compiler_fingerprint
 
 SCHEMA = "spider-compilation-plan/1"
 _SLITHER_RECURSION_LIMIT = 3000
@@ -58,8 +58,6 @@ def _compile_candidates(
     plan: dict[str, Any], standard: dict[str, Any], root: Path, artifacts: Path
 ) -> tuple[str, dict[str, Any], bool, list[dict[str, Any]], dict[str, Any]]:
     """Try pinned settings, then explicit optimizer/via-IR recoveries when safe."""
-    from solc_select.solc_select import artifact_path
-
     candidates = plan.get("compiler_candidates") or [plan["compiler"]["requested"]]
     attempts: list[dict[str, Any]] = []
     last_output: dict[str, Any] | None = None
@@ -98,7 +96,7 @@ def _compile_candidates(
                 returncode = cached["returncode"]
             else:
                 result = subprocess.run(
-                    [str(artifact_path(version)), "--standard-json"],
+                    compiler_command(version, "--standard-json"),
                     input=json.dumps(input_standard).encode(),
                     capture_output=True,
                     cwd=root,
