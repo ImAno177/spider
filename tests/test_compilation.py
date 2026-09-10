@@ -10,6 +10,7 @@ import spider.compilation as compilation
 from spider.compilation import (
     SCHEMA,
     _compile_candidates,
+    _normalize_compiler_sources,
     _normalize_legacy_combined_output,
     _normalize_source_asts,
     _slither_recursion_budget,
@@ -139,7 +140,61 @@ def test_legacy_compiler_uses_combined_json(monkeypatch, tmp_path: Path):
     assert attempts[0]["success"]
     assert calls[0][0] == ["solc", "--combined-json", "abi,ast,bin,bin-runtime,srcmap,srcmap-runtime", "A.sol"]
     assert calls[0][1]["input"] is None
+    assert attempts[0]["source_normalization"] == {"schema": "spider-source-normalization/1", "applied": False, "removed": []}
     assert output["sources"]["A.sol"]["ast"]["src"] == "0:0:1"
+
+
+def test_compiler_source_normalization_removes_only_leading_utf8_bom():
+    standard = {"language": "Solidity", "sources": {"BOM.sol": {"content": "\ufeffcontract A {}"}, "plain.sol": {"content": "contract B {}"}}, "settings": {}}
+
+    normalized, metadata = _normalize_compiler_sources(standard)
+
+    assert standard["sources"]["BOM.sol"]["content"].startswith("\ufeff")
+    assert normalized["sources"]["BOM.sol"]["content"] == "contract A {}"
+    assert normalized["sources"]["plain.sol"] == standard["sources"]["plain.sol"]
+    assert metadata == {
+        "schema": "spider-source-normalization/1",
+        "applied": True,
+        "removed": [{"source_unit": "BOM.sol", "encoding": "utf-8-bom", "removed_bytes": 3}],
+    }
+
+
+def test_bom_plan_compiles_with_raw_manifest_and_normalization_metadata(tmp_path: Path):
+    source = tmp_path / "BOM.sol"
+    raw = b"\xef\xbb\xbfpragma solidity 0.8.25; contract A { uint public x; }"
+    source.write_bytes(raw)
+    plan = {
+        "schema": SCHEMA,
+        "project_id": "audit/bom",
+        "sources": {"BOM.sol": {"path": str(source), "sha256": hashlib.sha256(raw).hexdigest()}},
+        "entries": ["BOM.sol"],
+        "settings": {},
+        "compiler": compiler_fingerprint("0.8.25"),
+        "dependencies": [],
+    }
+    plan["unit_id"] = digest(plan)
+    plan_path = tmp_path / "bom-plan.json"
+    artifact_path = tmp_path / "compilation"
+    write_json(plan_path, plan)
+
+    graph = extract_plan(plan_path, artifact_path)
+    status = json.loads((artifact_path / "status.json").read_text(encoding="utf-8"))
+    input_standard = json.loads((artifact_path / "input.json").read_text(encoding="utf-8"))
+
+    assert input_standard["sources"]["BOM.sol"]["content"].startswith("pragma solidity")
+    assert status["source_normalization"]["applied"] is True
+    assert status["source_normalization"]["removed"][0]["source_unit"] == "BOM.sol"
+    assert graph["graph"]["source_files"] == [
+        {
+            "file_id": 0,
+            "path": str(artifact_path / "sources" / "BOM.sol").replace("\\", "/"),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "byte_length": len(raw),
+            "encoding": "utf-8",
+        }
+    ]
+    assert graph["graph"]["source_normalization"] == status["source_normalization"]
+    assert not validate(graph)
 
 
 def test_plan_compile_and_mutation(tmp_path: Path):

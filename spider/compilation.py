@@ -21,6 +21,7 @@ from .solc import compiler_command, compiler_fingerprint
 SCHEMA = "spider-compilation-plan/1"
 _SLITHER_RECURSION_LIMIT = 3000
 _LEGACY_COMBINED_JSON_FIELDS = "abi,ast,bin,bin-runtime,srcmap,srcmap-runtime"
+_SOURCE_NORMALIZATION_SCHEMA = "spider-source-normalization/1"
 
 
 @contextmanager
@@ -46,6 +47,18 @@ def write_json(path: Path, value: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def _normalize_compiler_sources(standard: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Remove only a leading UTF-8 BOM from compiler-facing source content."""
+    normalized = deepcopy(standard)
+    removed: list[dict[str, Any]] = []
+    for source_name, record in normalized.get("sources", {}).items():
+        content = record.get("content") if isinstance(record, dict) else None
+        if isinstance(content, str) and content.startswith("\ufeff"):
+            record["content"] = content[1:]
+            removed.append({"source_unit": source_name, "encoding": "utf-8-bom", "removed_bytes": 3})
+    return normalized, {"schema": _SOURCE_NORMALIZATION_SCHEMA, "applied": bool(removed), "removed": removed}
 
 
 def _normalize_source_asts(output: dict[str, Any]) -> None:
@@ -154,12 +167,14 @@ def _via_ir_supported(version: str) -> bool:
 
 
 def _compile_candidates(
-    plan: dict[str, Any], standard: dict[str, Any], root: Path, artifacts: Path
+    plan: dict[str, Any], standard: dict[str, Any], root: Path, artifacts: Path,
+    source_normalization: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], bool, list[dict[str, Any]], dict[str, Any]]:
     """Try pinned settings, then explicit optimizer/via-IR recoveries when safe."""
     candidates = plan.get("compiler_candidates") or [plan["compiler"]["requested"]]
     attempts: list[dict[str, Any]] = []
     last_output: dict[str, Any] | None = None
+    normalization = source_normalization or {"schema": _SOURCE_NORMALIZATION_SCHEMA, "applied": False, "removed": []}
 
     def run(version: str, input_standard: dict[str, Any], recovery: str | None = None) -> tuple[str, dict[str, Any], bool] | None:
         nonlocal last_output
@@ -170,6 +185,7 @@ def _compile_candidates(
             "fingerprint": fingerprint,
             "cache_hit": False,
             "settings": input_standard["settings"],
+            "source_normalization": normalization,
         }
         if recovery:
             attempt["recovery"] = recovery
@@ -343,9 +359,11 @@ def extract_plan(plan_path: Path, artifacts: Path) -> dict[str, Any]:
             source_bytes[str(target)] = raw
         standard = {"language": "Solidity", "sources": {n: {"content": source_bytes[str(root / n)].decode("utf-8")} for n in plan["sources"]}, "settings": plan["settings"].copy()}
         standard["settings"]["outputSelection"] = {"*": {"*": ["abi", "evm.bytecode", "evm.deployedBytecode", "devdoc", "userdoc"], "": ["ast"]}}
+        standard, source_normalization = _normalize_compiler_sources(standard)
+        status["source_normalization"] = source_normalization
         write_json(artifacts / "input.json", standard)
         stage = "solc"
-        version, output, cache_hit, compiler_attempts, selected_standard = _compile_candidates(plan, standard, root, artifacts)
+        version, output, cache_hit, compiler_attempts, selected_standard = _compile_candidates(plan, standard, root, artifacts, source_normalization)
         status["compiler_cache_hit"] = cache_hit
         status["compiler_attempts"] = compiler_attempts
         status["selected_compiler"] = compiler_fingerprint(version)
@@ -370,6 +388,7 @@ def extract_plan(plan_path: Path, artifacts: Path) -> dict[str, Any]:
             compilation_plan_digest=digest(plan),
             compilation_plan=plan,
             compiler_selection={"selected": compiler_fingerprint(version), "attempts": stable_attempts, "selected_settings": selected_standard["settings"]},
+            source_normalization=source_normalization,
         )
         status["graph_built"] = True
         stage = "verifier"
