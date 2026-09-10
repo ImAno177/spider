@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -45,23 +46,43 @@ def write_json(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
-def _compile_candidates(plan: dict[str, Any], standard: dict[str, Any], root: Path, artifacts: Path) -> tuple[str, dict[str, Any], bool, list[dict[str, Any]]]:
-    """Try the pinned candidate order and return the first successful output."""
+def _via_ir_supported(version: str) -> bool:
+    try:
+        major, minor, patch = (int(part) for part in version.split(".")[:3])
+    except (TypeError, ValueError):
+        return False
+    return (major, minor, patch) >= (0, 8, 13)
+
+
+def _compile_candidates(
+    plan: dict[str, Any], standard: dict[str, Any], root: Path, artifacts: Path
+) -> tuple[str, dict[str, Any], bool, list[dict[str, Any]], dict[str, Any]]:
+    """Try pinned settings, then an explicit via-IR recovery when it is safe."""
     from solc_select.solc_select import artifact_path
 
     candidates = plan.get("compiler_candidates") or [plan["compiler"]["requested"]]
     attempts: list[dict[str, Any]] = []
     last_output: dict[str, Any] | None = None
-    for version in candidates:
+
+    def run(version: str, input_standard: dict[str, Any], recovery: str | None = None) -> tuple[str, dict[str, Any], bool] | None:
+        nonlocal last_output
         fingerprint = compiler_fingerprint(version)
-        attempt: dict[str, Any] = {"version": version, "fingerprint": fingerprint, "cache_hit": False}
+        suffix = f"-{recovery.lower()}" if recovery else ""
+        attempt: dict[str, Any] = {
+            "version": version,
+            "fingerprint": fingerprint,
+            "cache_hit": False,
+            "settings": input_standard["settings"],
+        }
+        if recovery:
+            attempt["recovery"] = recovery
         if not fingerprint.get("usable"):
             attempt.update(success=False, error="compiler fingerprint is not usable")
             attempts.append(attempt)
-            continue
-        cache_key = digest({"input": standard, "compiler": fingerprint})
-        cache_path = artifacts / f"compiler-cache-{version}.json"
-        output_path = artifacts / f"output-{version}.json"
+            return None
+        cache_key = digest({"input": input_standard, "compiler": fingerprint})
+        cache_path = artifacts / f"compiler-cache-{version}{suffix}.json"
+        output_path = artifacts / f"output-{version}{suffix}.json"
         canonical_output = artifacts / "output.json"
         cached = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
         cache_hit = (
@@ -78,12 +99,12 @@ def _compile_candidates(plan: dict[str, Any], standard: dict[str, Any], root: Pa
             else:
                 result = subprocess.run(
                     [str(artifact_path(version)), "--standard-json"],
-                    input=json.dumps(standard).encode(),
+                    input=json.dumps(input_standard).encode(),
                     capture_output=True,
                     cwd=root,
                 )
-                stdout_path = artifacts / f"solc-{version}.stdout"
-                stderr_path = artifacts / f"solc-{version}.stderr"
+                stdout_path = artifacts / f"solc-{version}{suffix}.stdout"
+                stderr_path = artifacts / f"solc-{version}{suffix}.stderr"
                 stdout_path.write_bytes(result.stdout)
                 stderr_path.write_bytes(result.stderr)
                 output = json.loads(result.stdout)
@@ -100,9 +121,42 @@ def _compile_candidates(plan: dict[str, Any], standard: dict[str, Any], root: Pa
             attempt.update(success=False, error=f"{type(error).__name__}: {error}")
         attempts.append(attempt)
         if attempt.get("success"):
-            write_json(artifacts / "compiler-cache.json", {"key": cache_key, "returncode": returncode, "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(), "selected": version})
+            write_json(
+                artifacts / "compiler-cache.json",
+                {
+                    "key": cache_key,
+                    "returncode": returncode,
+                    "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
+                    "selected": version,
+                    "settings": input_standard["settings"],
+                    "recovery": recovery,
+                },
+            )
+            return version, output, cache_hit
+
+        return None
+
+    for version in candidates:
+        selected = run(version, standard)
+        if selected is not None:
             write_json(artifacts / "compiler-attempts.json", attempts)
-            return version, output, cache_hit, attempts
+            return (*selected, attempts, standard)
+
+    stack_error = any("Stack too deep" in diagnostic for attempt in attempts for diagnostic in attempt.get("diagnostics", []))
+    pinned_settings = plan.get("settings", {})
+    if stack_error and "optimizer" not in pinned_settings and "viaIR" not in pinned_settings:
+        recovery_standard = deepcopy(standard)
+        recovery_standard["settings"]["optimizer"] = {"enabled": True, "runs": 200}
+        recovery_standard["settings"]["viaIR"] = True
+        write_json(artifacts / "input-recovery-viair.json", recovery_standard)
+        for version in candidates:
+            if not _via_ir_supported(version):
+                continue
+            selected = run(version, recovery_standard, "viaIR")
+            if selected is not None:
+                write_json(artifacts / "compiler-attempts.json", attempts)
+                return (*selected, attempts, recovery_standard)
+
     write_json(artifacts / "compiler-attempts.json", attempts)
     if last_output is not None:
         write_json(artifacts / "output.json", last_output)
@@ -177,19 +231,20 @@ def extract_plan(plan_path: Path, artifacts: Path) -> dict[str, Any]:
         standard["settings"]["outputSelection"] = {"*": {"*": ["abi", "evm.bytecode", "evm.deployedBytecode", "devdoc", "userdoc"], "": ["ast"]}}
         write_json(artifacts / "input.json", standard)
         stage = "solc"
-        version, output, cache_hit, compiler_attempts = _compile_candidates(plan, standard, root, artifacts)
+        version, output, cache_hit, compiler_attempts, selected_standard = _compile_candidates(plan, standard, root, artifacts)
         status["compiler_cache_hit"] = cache_hit
         status["compiler_attempts"] = compiler_attempts
         status["selected_compiler"] = compiler_fingerprint(version)
+        status["selected_settings"] = selected_standard["settings"]
         errors = [e for e in output.get("errors", []) if e.get("severity") == "error"]
         if errors:
             raise ValueError("\n".join(e.get("formattedMessage", e.get("message", str(e))) for e in errors))
-        if set(output.get("sources", {})) != set(standard["sources"]) or any(not s.get("ast") for s in output["sources"].values()):
+        if set(output.get("sources", {})) != set(selected_standard["sources"]) or any(not s.get("ast") for s in output["sources"].values()):
             raise ValueError("compiler source/AST coverage mismatch")
         status["solc_ok"] = True
         stage = "slither"
         with _slither_recursion_budget():
-            compilation = CryticCompile(_CompiledJson(standard, output, version), solc_working_dir=str(root))
+            compilation = CryticCompile(_CompiledJson(selected_standard, output, version), solc_working_dir=str(root))
             slither = Slither(compilation)
             status["slither_ok"] = True
             stage = "graph"
@@ -199,7 +254,7 @@ def extract_plan(plan_path: Path, artifacts: Path) -> dict[str, Any]:
             compilation_unit_id=plan["unit_id"],
             compilation_plan_digest=digest(plan),
             compilation_plan=plan,
-            compiler_selection={"selected": compiler_fingerprint(version), "attempts": stable_attempts},
+            compiler_selection={"selected": compiler_fingerprint(version), "attempts": stable_attempts, "selected_settings": selected_standard["settings"]},
         )
         status["graph_built"] = True
         stage = "verifier"
