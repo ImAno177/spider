@@ -14,6 +14,13 @@ TOKEN_RE = re.compile(r"(\^|>=|<=|>|<|=)?\s*(\d+)\s*\.\s*(\d+)(?:\s*\.\s*(\d+))?
 VERSION_RE = re.compile(r"\bVersion:\s*(\d+\.\d+\.\d+)(\S*)")
 _IGNORED_PROJECT_DIRS = {".git", ".hg", ".svn", ".venv", "artifacts", "build", "cache", "node_modules", "out", "venv"}
 
+# Solidity 0.4.15's official Windows release reports its historical nightly
+# build label even though the release artifact is pinned and checksummed.  A
+# digest match is required before accepting that one upstream quirk.
+_AUTHENTICATED_RELEASE_DIGESTS = {
+    "0.4.15": {"9e22db7ba9881a4fa43ee38404f4aba531f7e4b84a8ecf5e9e423062e45564fe"},
+}
+
 
 def _without_comments(source: str) -> str:
     """Remove Solidity comments while preserving quoted text and line boundaries."""
@@ -147,11 +154,18 @@ def compiler_fingerprint(requested: str) -> dict[str, str | bool]:
     except (OSError, subprocess.SubprocessError):
         match = None
     reported = "" if match is None else "".join(match.groups())
+    release = bool(match and result.returncode == 0 and match.group(1) == requested and not match.group(2).startswith("-"))
+    authenticated_release = bool(
+        match
+        and result.returncode == 0
+        and match.group(1) == requested
+        and digest in _AUTHENTICATED_RELEASE_DIGESTS.get(requested, set())
+    )
     return {
         "requested": requested,
         "reported": reported,
         "binary_sha256": digest,
-        "usable": bool(match and result.returncode == 0 and match.group(1) == requested and not match.group(2).startswith("-")),
+        "usable": release or authenticated_release,
     }
 
 

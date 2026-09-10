@@ -69,6 +69,11 @@ def test_compiler_fingerprint_rejects_prerelease_and_tracks_binary(tmp_path: Pat
     nightly = solc.compiler_fingerprint("0.4.15")
     assert nightly["reported"].startswith("0.4.15-nightly") and not nightly["usable"]
 
+    monkeypatch.setitem(solc._AUTHENTICATED_RELEASE_DIGESTS, "0.4.15", {nightly["binary_sha256"]})
+    solc.compiler_fingerprint.cache_clear()
+    authenticated = solc.compiler_fingerprint("0.4.15")
+    assert authenticated["usable"]
+
     binary.write_bytes(b"stable")
     output = "Version: 0.4.15+commit.8b45bddb.Windows.msvc\n"
     solc.compiler_fingerprint.cache_clear()
