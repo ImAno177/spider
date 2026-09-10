@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -48,9 +49,25 @@ def write_json(path: Path, value: Any) -> None:
 
 def _normalize_source_asts(output: dict[str, Any]) -> None:
     """Expose legacy solc ASTs through the standard-json AST field for parsers."""
-    for source in output.get("sources", {}).values():
+    source_names = set(output.get("sources", {}))
+    for source_name, source in output.get("sources", {}).items():
         if not source.get("ast") and source.get("legacyAST"):
-            source["ast"] = source["legacyAST"]
+            ast = source["legacyAST"]
+            source["ast"] = ast
+            pending = [ast]
+            while pending:
+                item = pending.pop()
+                if isinstance(item, dict):
+                    if item.get("name") == "ImportDirective":
+                        attributes = item.get("attributes")
+                        raw_path = attributes.get("file") if isinstance(attributes, dict) else None
+                        if isinstance(raw_path, str) and isinstance(attributes, dict) and not attributes.get("absolutePath"):
+                            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source_name), raw_path.replace("\\", "/")))
+                            if resolved in source_names:
+                                attributes["absolutePath"] = resolved
+                    pending.extend(item.values())
+                elif isinstance(item, list):
+                    pending.extend(item)
 
 
 def _via_ir_supported(version: str) -> bool:

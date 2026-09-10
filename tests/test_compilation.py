@@ -31,6 +31,24 @@ def test_legacy_solc_ast_is_promoted_without_overwriting_ast():
     assert output["sources"]["current.sol"]["ast"] is current
 
 
+def test_legacy_solc_import_path_uses_source_unit_name():
+    output = {
+        "sources": {
+            "contracts/v2/Token.sol": {
+                "legacyAST": {
+                    "name": "SourceUnit",
+                    "children": [{"name": "ImportDirective", "attributes": {"file": "../v1/Base.sol"}}],
+                }
+            },
+            "contracts/v1/Base.sol": {"legacyAST": {"name": "SourceUnit", "children": []}},
+        }
+    }
+
+    _normalize_source_asts(output)
+
+    assert output["sources"]["contracts/v2/Token.sol"]["ast"]["children"][0]["attributes"]["absolutePath"] == "contracts/v1/Base.sol"
+
+
 def test_plan_compile_and_mutation(tmp_path: Path):
     source = tmp_path / "A.sol"
     source.write_bytes(b"pragma solidity 0.4.25; contract A { uint public x; function set(uint v) public { x = v; } }")
