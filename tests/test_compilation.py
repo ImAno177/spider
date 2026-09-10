@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from spider.compilation import SCHEMA, _slither_recursion_budget, digest, extract_plan, load_plan, write_json
+from spider.compilation import SCHEMA, _normalize_source_asts, _slither_recursion_budget, digest, extract_plan, load_plan, write_json
 from spider.solc import compiler_fingerprint
 from spider.verify import validate
 
@@ -18,6 +18,17 @@ def test_slither_recursion_budget_is_temporary(monkeypatch):
     with _slither_recursion_budget():
         pass
     assert calls == [3000, 1000]
+
+
+def test_legacy_solc_ast_is_promoted_without_overwriting_ast():
+    legacy = {"nodeType": "SourceUnit", "nodes": []}
+    current = {"nodeType": "SourceUnit", "nodes": [{"nodeType": "PragmaDirective"}]}
+    output = {"sources": {"legacy.sol": {"legacyAST": legacy}, "current.sol": {"ast": current, "legacyAST": legacy}}}
+
+    _normalize_source_asts(output)
+
+    assert output["sources"]["legacy.sol"]["ast"] is legacy
+    assert output["sources"]["current.sol"]["ast"] is current
 
 
 def test_plan_compile_and_mutation(tmp_path: Path):

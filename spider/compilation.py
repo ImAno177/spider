@@ -46,6 +46,13 @@ def write_json(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
+def _normalize_source_asts(output: dict[str, Any]) -> None:
+    """Expose legacy solc ASTs through the standard-json AST field for parsers."""
+    for source in output.get("sources", {}).values():
+        if not source.get("ast") and source.get("legacyAST"):
+            source["ast"] = source["legacyAST"]
+
+
 def _via_ir_supported(version: str) -> bool:
     try:
         major, minor, patch = (int(part) for part in version.split(".")[:3])
@@ -246,6 +253,7 @@ def extract_plan(plan_path: Path, artifacts: Path) -> dict[str, Any]:
         errors = [e for e in output.get("errors", []) if e.get("severity") == "error"]
         if errors:
             raise ValueError("\n".join(e.get("formattedMessage", e.get("message", str(e))) for e in errors))
+        _normalize_source_asts(output)
         if set(output.get("sources", {})) != set(selected_standard["sources"]) or any(not s.get("ast") for s in output["sources"].values()):
             raise ValueError("compiler source/AST coverage mismatch")
         status["solc_ok"] = True
