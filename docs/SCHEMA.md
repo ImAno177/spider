@@ -177,6 +177,15 @@ verification results in `OUTPUT_STEM.compilation/` next to the graph. A solc
 success is not a graph success. The `solc_ok`, `slither_ok`, `graph_built` and
 `graph_valid` status fields are independent gates.
 
+When a plan does not pin `optimizer` or `viaIR`, a stack-too-deep compiler
+diagnostic may trigger one explicit recovery attempt using optimizer runs 200
+and `viaIR: true` on a compiler that supports it. The attempt is recorded in
+`compiler-attempts.json` with its complete Standard JSON settings and
+`recovery: "viaIR"`; `input-recovery-viair.json` preserves the exact input.
+Graph metadata exposes the selected settings under
+`compiler_selection.selected_settings`. Pinned settings never receive this
+fallback.
+
 Consumers should check `graph.format` before loading a graph and record
 `extractor_version` with derived datasets. Additive node or edge labels may
 appear while the format remains `spider-cpg/1.0`; consumers must therefore use
