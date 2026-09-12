@@ -170,7 +170,7 @@ def compiler_fingerprint(requested: str) -> dict[str, str | bool]:
         "usable": release or authenticated_release,
     }
     if override is not None:
-        fingerprint["transport"] = "wsl"
+        fingerprint["transport"] = "wsl" if os.name == "nt" else "native"
     return fingerprint
 
 
@@ -180,9 +180,12 @@ def _release_override(requested: str) -> Path | None:
     if requested != "0.4.15":
         return None
     value = os.environ.get(_SOLC_0415_LINUX_ENV, "").strip()
-    if not value or value.startswith("/"):
+    if not value or (os.name == "nt" and value.startswith("/")):
         return None
-    path = Path(value).expanduser().resolve()
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        return None
+    path = path.resolve()
     return path if path.is_file() else None
 
 

@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import spider.solc as solc
 from spider.solc import compatible_project_versions, compatible_version, compatible_versions, pragma_expressions, pragma_from, resolve_solc, solidity_sources
@@ -102,6 +103,25 @@ def test_explicit_0415_wsl_release_transport(tmp_path: Path, monkeypatch) -> Non
     )
     fingerprint = solc.compiler_fingerprint("0.4.15")
     assert fingerprint["transport"] == "wsl"
+    assert fingerprint["usable"] is True
+    solc.compiler_fingerprint.cache_clear()
+
+
+def test_explicit_0415_posix_absolute_release(tmp_path: Path, monkeypatch) -> None:
+    binary = tmp_path / "solc-0.4.15-linux"
+    binary.write_bytes(b"stable-linux")
+    monkeypatch.setenv(solc._SOLC_0415_LINUX_ENV, str(binary))
+    monkeypatch.setattr(solc, "os", SimpleNamespace(name="posix", environ=os.environ))
+    command = solc.compiler_command("0.4.15", "--version")
+    assert command == [str(binary.resolve()), "--version"]
+    solc.compiler_fingerprint.cache_clear()
+    monkeypatch.setattr(
+        solc.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "Version: 0.4.15+commit.8b45bddb.Linux.g++\n", ""),
+    )
+    fingerprint = solc.compiler_fingerprint("0.4.15")
+    assert fingerprint["transport"] == "native"
     assert fingerprint["usable"] is True
     solc.compiler_fingerprint.cache_clear()
 
