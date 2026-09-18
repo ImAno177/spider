@@ -12,7 +12,7 @@ from .schema import GRAPH_FORMAT
 _ANCHOR_SCHEMA = "spider-source-anchor/1"
 _ATTRIBUTE_SCHEMA = "spider-attributes/1"
 _SOURCE_STATUS = {"present", "missing", "synthetic"}
-_ANCHOR_ORIGINS = {"exact", "cfg_fallback", "synthetic", "missing"}
+_ANCHOR_ORIGINS = {"exact", "cfg_fallback", "expression_fallback", "synthetic", "missing"}
 _TYPE_FAMILIES = {"address", "boolean", "integer", "fixed_bytes", "dynamic_bytes", "string", "fixed_point", "array", "mapping", "contract", "struct", "enum", "function", "user_defined", "type_meta", "unknown", "UNK"}
 _VISIBILITIES = {"public", "external", "internal", "private", "NA", "MISSING", "UNK"}
 _DATA_LOCATIONS = {"storage", "memory", "calldata", "transient", "NA", "MISSING", "UNK"}

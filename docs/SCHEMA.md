@@ -69,7 +69,7 @@ node.
 | `byte_start`, `byte_end` | Half-open UTF-8 byte range, or `null`. |
 | `code` | Trimmed source text decoded from the byte range, or an empty string. |
 | `source_mapping_status` | `present`, `missing`, or `synthetic`. |
-| `anchor_origin` | `exact`, `cfg_fallback`, `missing`, or `synthetic`. |
+| `anchor_origin` | `exact`, `cfg_fallback`, `expression_fallback`, `missing`, or `synthetic`. |
 
 Node types may add finite semantic attributes such as declaration role,
 visibility, mutability, operator family, data location, or type family.

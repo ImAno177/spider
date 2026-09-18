@@ -3,14 +3,25 @@ import random
 import sys
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from spider import extract
+from spider._builder import _operation_anchor
 from spider._graph import _canonicalize_graph
 from spider.extract import to_dot
 from spider.schema import GRAPH_FORMAT
 from spider.verify import validate
+
+
+def test_operation_anchor_uses_expression_span_when_cfg_span_is_missing() -> None:
+    mapping = SimpleNamespace(filename=SimpleNamespace(absolute="legacy.sol"), start=0)
+    expression = SimpleNamespace(source_mapping=mapping)
+    operation = SimpleNamespace(source_mapping=None, expression=expression)
+    node = SimpleNamespace(source_mapping=None)
+
+    assert _operation_anchor(operation, node) == (expression, "expression_fallback")
 
 
 def test_extract() -> None:

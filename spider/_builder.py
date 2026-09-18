@@ -29,6 +29,18 @@ from ._graph import (
 )
 
 
+def _operation_anchor(operation: Any, node: Any) -> tuple[Any, str]:
+    """Choose a source-bearing anchor for an operation and its derived nodes."""
+    if _has_span(operation):
+        return operation, "exact"
+    if _has_span(node):
+        return node, "cfg_fallback"
+    expression = getattr(operation, "expression", None)
+    if _has_span(expression):
+        return expression, "expression_fallback"
+    return node, "cfg_fallback"
+
+
 def _add_dataflow(graph: _Graph, blocks: list[str], predecessors: dict[str, list[str]], operations: dict[str, list[dict[str, Any]]], parameters: dict[int, set[str]]) -> None:
     """Emit CFG-fixpoint reaching definitions, preserving IR order inside each block."""
     incoming: dict[str, dict[int, set[str]]] = {block: {} for block in blocks}
@@ -359,21 +371,23 @@ def build_graph(
 
                 operations = list(getattr(node, "irs", []))
                 operation_ids: dict[int, str] = {}
+                operation_anchors: dict[int, tuple[Any, str]] = {}
                 ordered_operations: list[str] = []
                 for evaluation_index, operation in enumerate(operations):
                     operation_name = type(operation).__name__
                     operation_label = _operation_label(operation)
-                    operation_has_span = _has_span(operation)
+                    operation_anchor, anchor_origin = _operation_anchor(operation, node)
+                    operation_anchors[id(operation)] = (operation_anchor, anchor_origin)
                     op_id = graph.node(
                         operation_label,
                         str(operation),
-                        operation if operation_has_span else node,
+                        operation_anchor,
                         sources,
                         contract_name=contract.name,
                         function_name=function.name,
                         operation_type=operation_name,
                         evaluation_index=evaluation_index,
-                        anchor_origin="exact" if operation_has_span else "cfg_fallback",
+                        anchor_origin=anchor_origin,
                         **_operator_attributes(operation, node),
                     )
                     operation_ids[id(operation)] = op_id
@@ -395,10 +409,10 @@ def build_graph(
                             target = graph.node(
                                 "BUILTIN_VARIABLE",
                                 str(operand),
-                                operation if operation_has_span else node,
+                                operation_anchor,
                                 sources,
                                 builtin_role=_builtin_role(operand),
-                                anchor_origin="exact" if operation_has_span else "cfg_fallback",
+                                anchor_origin=anchor_origin,
                             )
                             graph.edge(op_id, target, "AST")
                             graph.edge(op_id, target, "READS")
@@ -407,11 +421,11 @@ def build_graph(
                             target = graph.node(
                                 "LITERAL",
                                 str(operand),
-                                operation if operation_has_span else node,
+                                operation_anchor,
                                 sources,
                                 value=str(operand),
                                 literal_category=_literal_category(operand, getattr(operand, "type", None)),
-                                anchor_origin="exact" if operation_has_span else "cfg_fallback",
+                                anchor_origin=anchor_origin,
                             )
                             graph.edge(op_id, target, "AST")
                             graph.edge(op_id, target, "OPERAND", operand_index=operand_index)
@@ -430,13 +444,13 @@ def build_graph(
                         label = "LITERAL" if value_type == "Constant" else "BUILTIN_VARIABLE" if value_type.startswith("SolidityVariable") else "IDENTIFIER"
                         attributes = {
                             "solidity_role": role,
-                            "anchor_origin": "exact" if operation_has_span else "cfg_fallback",
+                            "anchor_origin": anchor_origin,
                         }
                         if label == "LITERAL":
                             attributes.update({"value": str(value), "literal_category": _literal_category(value, getattr(value, "type", None))})
                         elif label == "BUILTIN_VARIABLE":
                             attributes["builtin_role"] = _builtin_role(value)
-                        target = graph.node(label, str(value), operation if operation_has_span else node, sources, **attributes)
+                        target = graph.node(label, str(value), operation_anchor, sources, **attributes)
                         graph.edge(op_id, target, "AST")
                         return target
 
@@ -449,10 +463,10 @@ def build_graph(
                         member_id = graph.node(
                             "MEMBER_NAME",
                             str(member),
-                            operation if operation_has_span else node,
+                            operation_anchor,
                             sources,
                             solidity_role="MEMBER_FIELD",
-                            anchor_origin="exact" if operation_has_span else "cfg_fallback",
+                            anchor_origin=anchor_origin,
                         )
                         graph.edge(op_id, member_id, "AST")
                         graph.edge(op_id, member_id, "MEMBER_FIELD")
@@ -503,12 +517,14 @@ def build_graph(
                         if caller is None or id(raw_call) in seen_calls:
                             continue
                         seen_calls.add(id(raw_call))
-                        call_sites.append({"raw": raw_call, "candidate": _call_target(call), "caller": caller, "caller_function": function_key, "caller_exit": flow["exit"], "continuations": evaluation_successors.get(caller, list(flow["successors"][cfg_id])), "node": node, "call": call})
+                        anchor, anchor_origin = operation_anchors[id(raw_call)]
+                        call_sites.append({"raw": raw_call, "candidate": _call_target(call), "caller": caller, "caller_function": function_key, "caller_exit": flow["exit"], "continuations": evaluation_successors.get(caller, list(flow["successors"][cfg_id])), "anchor": anchor, "anchor_origin": anchor_origin, "call": call})
                 for operation in operations:
                     if type(operation).__name__ not in {"Send", "Transfer"} or id(operation) in seen_calls:
                         continue
                     caller = operation_ids[id(operation)]
-                    call_sites.append({"raw": operation, "candidate": None, "caller": caller, "caller_function": function_key, "caller_exit": flow["exit"], "continuations": evaluation_successors.get(caller, list(flow["successors"][cfg_id])), "node": node, "call": operation})
+                    anchor, anchor_origin = operation_anchors[id(operation)]
+                    call_sites.append({"raw": operation, "candidate": None, "caller": caller, "caller_function": function_key, "caller_exit": flow["exit"], "continuations": evaluation_successors.get(caller, list(flow["successors"][cfg_id])), "anchor": anchor, "anchor_origin": anchor_origin, "call": operation})
             _add_dataflow(graph, flow["blocks"], predecessors, operations_by_block, {id(parameter): {parameter_id} for parameter, parameter_id in parameter_ids[function_key]})
             _add_control_dependence(graph, flow["body_entry"], flow["body_exit"], flow["blocks"], flow["successors"])
 
@@ -552,14 +568,13 @@ def build_graph(
         if target:
             return target
         label = "LITERAL" if type(value).__name__ == "Constant" else "BUILTIN_VARIABLE" if type(value).__name__.startswith("SolidityVariable") else "IDENTIFIER"
-        raw_call = call["raw"]
-        has_span = _has_span(raw_call)
-        attributes = {"solidity_role": role, "anchor_origin": "exact" if has_span else "cfg_fallback"}
+        anchor = call["anchor"]
+        attributes = {"solidity_role": role, "anchor_origin": call["anchor_origin"]}
         if label == "LITERAL":
             attributes.update({"value": str(value), "literal_category": _literal_category(value, getattr(value, "type", None))})
         elif label == "BUILTIN_VARIABLE":
             attributes["builtin_role"] = _builtin_role(value)
-        return graph.node(label, str(value), raw_call if has_span else call["node"], sources, **attributes)
+        return graph.node(label, str(value), anchor, sources, **attributes)
 
     for call in call_sites:
         call["candidate_key"] = _function_key(call["candidate"]) if call["candidate"] is not None else None
@@ -616,14 +631,13 @@ def build_graph(
             graph.edge(call["caller"], target, "DYNAMIC_DELEGATECALL")
         for index, argument in enumerate(getattr(call["raw"], "arguments", [])):
             label = "LITERAL" if type(argument).__name__ == "Constant" else "IDENTIFIER"
-            argument_has_span = _has_span(call["raw"])
             argument_attrs = {
                 "argument_index": index,
-                "anchor_origin": "exact" if argument_has_span else "cfg_fallback",
+                "anchor_origin": call["anchor_origin"],
             }
             if label == "LITERAL":
                 argument_attrs.update({"value": str(argument), "literal_category": _literal_category(argument, getattr(argument, "type", None))})
-            argument_id = graph.node(label, str(argument), call["raw"] if argument_has_span else call["node"], sources, **argument_attrs)
+            argument_id = graph.node(label, str(argument), call["anchor"], sources, **argument_attrs)
             graph.edge(call["caller"], argument_id, "AST")
             graph.edge(call["caller"], argument_id, "ARGUMENT", argument_index=index)
             producer = value_producers.get((call["caller_function"], id(argument)))
