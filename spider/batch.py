@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import __version__
+from .errors import classify_compile_error
 from .solc import pragma_from
 
 
@@ -66,8 +67,11 @@ def main() -> None:
                 nodes=len(graph["nodes"]),
                 edges=len(graph["links"]),
             )
+        except subprocess.TimeoutExpired as error:
+            record.update(status="error", selected_solc=None, error=f"{type(error).__name__}: {error}", error_class="timeout")
         except (Exception, SystemExit) as error:
-            record.update(status="error", selected_solc=None, error=f"{type(error).__name__}: {error}")
+            error_text = f"{type(error).__name__}: {error}"
+            record.update(status="error", selected_solc=None, error=error_text, error_class=classify_compile_error(error_text))
         record["seconds"] = round(time.monotonic() - started, 3)
         records.append(record)
         print(f"{record['status']:5} {record['source']}", flush=True)
@@ -75,10 +79,12 @@ def main() -> None:
     manifest = output / "manifest.jsonl"
     manifest.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
     compilers = Counter(record["selected_solc"] for record in records if record["status"] == "ok")
+    error_classes = Counter(record["error_class"] for record in records if record["status"] == "error")
     summary = {
         "files": len(records),
         "ok": sum(record["status"] == "ok" for record in records),
         "error": sum(record["status"] == "error" for record in records),
+        "error_classes": dict(sorted(error_classes.items())),
         "compilers": dict(sorted(compilers.items())),
         "node_types": sorted(node_types),
         "edge_types": sorted(edge_types),

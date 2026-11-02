@@ -109,6 +109,9 @@ Directory extraction uses Solidity Standard JSON to preserve source paths and
 byte anchors. Initial source discovery skips build output, version-control
 metadata, virtual environments, generated artifacts, and `node_modules`.
 Dependencies in skipped directories can still be included through remappings.
+Spider does not flatten imports or invent remappings; pass `--solc-remap` when
+a file imports a path that is not next to the entry source. Concatenated dumps
+with a second `pragma solidity` are compiled from the first pragma section only.
 
 ### DOT exports
 
@@ -136,7 +139,19 @@ spider-batch dataset/ out/corpus --timeout 30
 ```
 
 Results are written to `graphs/`, `manifest.jsonl`, and `summary.json`. Failed
-inputs remain explicit manifest records.
+inputs remain explicit manifest records with an `error_class`. `summary.json`
+counts those classes. A kernel can classify its own stderr the same way:
+
+```python
+from spider.errors import classify_compile_error
+record["error_class"] = classify_compile_error(stderr_text)
+```
+
+Compilation retries compatible installed `solc` versions when the first
+candidate fails (constructor-era 0.4 sources, pragma unions, and a small
+fallback list). Cap distinct versions with `SPIDER_MAX_SOLC_TRIES` (default 8).
+A missing import stops the ladder immediately; no later compiler will resolve
+it.
 
 ## Python API
 
@@ -177,7 +192,8 @@ compilation, extraction, canonicalization, and validation.
 - Modifier and state-effect summaries are context-insensitive.
 - Runtime callbacks, proxies, and dynamic targets are not inferred without a
   compiler-resolved source target.
-- Compiler, parser, and SlithIR failures stop extraction for the affected input.
+- Compiler, parser, and SlithIR failures stop extraction for the affected input
+  after the retry ladder is exhausted.
 
 ## Development
 

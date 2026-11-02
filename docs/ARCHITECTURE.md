@@ -19,6 +19,7 @@ Solidity source file or project directory
 | Module | Responsibility |
 | --- | --- |
 | `spider/solc.py` | Parse pragmas, fingerprint installed compilers, and choose compatible candidates in a deterministic order. |
+| `spider/errors.py` | Classify compiler and extractor failures into a small error-class vocabulary. |
 | `spider/extract.py` | Apply Slither compatibility fixes, compile the input, and expose the public extraction API. |
 | `spider/_builder.py` | Construct declarations, control/data flow, calls, returns, modifiers, and state-effect relations. |
 | `spider/_graph.py` | Store graph elements, attach source metadata, canonicalize output, and render DOT views. |
@@ -36,8 +37,16 @@ binaries are rejected.
 
 Compatible candidates are tried in deterministic order. For pre-1.0 Solidity,
 Spider tries the earliest compatible minor family first and the newest patch
-within that family. If no candidate constructs the Slither project, the final
-candidate failure is raised.
+within that family. When expansion is enabled, that intersection is followed by
+constructor-era 0.4.22+ compilers if the source uses `constructor(`, then the
+union of per-pragma matches, same-minor-family versions for exact pins, and a
+fixed fallback list. Unusable expanded entries are skipped. Sources that
+already compiled under the intersection keep the same first candidate.
+
+Each candidate still tries the existing solc argument sets. Distinct compiler
+versions are capped by `SPIDER_MAX_SOLC_TRIES` (default 8). A `missing_import`
+classification aborts the remaining ladder. Total failure raises `ExtractError`
+with the attempt log. Import flattening is not applied.
 
 ## Project construction
 
