@@ -1,9 +1,10 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from . import __version__
-from .extract import DOT_REPRESENTATIONS, extract, to_dot
+from .extract import DOT_REPRESENTATIONS, ExtractError, extract, to_dot
 from .verify import validate
 
 
@@ -29,7 +30,11 @@ def main() -> None:
     parser.add_argument("--solc-version", help="Require this installed solc version instead of selecting from the source pragma")
     args = parser.parse_args()
 
-    graph = extract(args.source, args.solc_remap, solc_version=args.solc_version)
+    try:
+        graph = extract(args.source, args.solc_remap, solc_version=args.solc_version)
+    except ExtractError as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(1) from error
     errors = validate(graph)
     if errors:
         raise SystemExit("Invalid extracted graph:\n" + "\n".join(f"- {error}" for error in errors))

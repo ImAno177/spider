@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +18,19 @@ from slither.visitors.slithir import expression_to_slithir as _slither_expressio
 
 from ._builder import build_graph as _build_graph
 from ._graph import DOT_REPRESENTATIONS, to_dot
-from .solc import solc_candidates, solidity_sources
+from .errors import classify_compile_error
+from .solc import first_solidity_segment, solc_candidates, solidity_sources
 
-__all__ = ["DOT_REPRESENTATIONS", "extract", "to_dot"]
+__all__ = ["DOT_REPRESENTATIONS", "ExtractError", "extract", "to_dot"]
+
+
+class ExtractError(RuntimeError):
+    """Raised when every solc candidate in the retry ladder fails."""
+
+    def __init__(self, message: str, attempts: list[tuple[str, str, str]]) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+
 
 # Slither 0.11.5 leaves a single-return call type wrapped in a list, then tries
 # to use that list as a dict key. Normalize the representation before its own
@@ -64,9 +77,12 @@ def _project_compilation(
     solc: Path,
     solc_args: str,
     solc_remaps: list[str] | None,
+    contents: dict[Path, str] | None = None,
 ) -> Slither:
     sources = {
-        source.relative_to(project).as_posix(): {"content": source.read_text(encoding="utf-8")}
+        source.relative_to(project).as_posix(): {
+            "content": contents[source] if contents is not None and source in contents else source.read_text(encoding="utf-8", errors="replace")
+        }
         for source in source_files
     }
     remappings: list[str] = []
@@ -115,25 +131,58 @@ def extract(path: str | Path, solc_remaps: list[str] | None = None, solc_version
     selected_solc_args = ""
     compiler_target = path.relative_to(path.anchor).as_posix() if path.drive else str(path)
     compiler_working_dir = {"solc_working_dir": path.anchor} if path.drive else {}
-    for selected_solc, solc in solc_candidates(path, solc_version):
-        attempts = ["", "--optimize"]
-        if tuple(map(int, selected_solc.split("."))) >= (0, 8, 13):
-            attempts.append("--via-ir --optimize")
-        for selected_solc_args in attempts:
-            try:
-                if project_input:
-                    slither = _project_compilation(path, source_files, solc, selected_solc_args, solc_remaps)
-                else:
-                    # solc 0.8.11 on Windows drops the drive prefix from absolute
-                    # source-unit names. Compile a drive-relative target while
-                    # preserving its directory hierarchy for relative imports.
-                    slither = Slither(compiler_target, solc_remaps=solc_remaps, solc=str(solc), solc_args=selected_solc_args, **compiler_working_dir)
+    compile_contents: dict[Path, str] = {}
+    for source in source_files:
+        text = source.read_text(encoding="utf-8", errors="replace")
+        segment = first_solidity_segment(text)
+        if segment != text:
+            compile_contents[source] = segment
+    try:
+        max_tries = int(os.environ.get("SPIDER_MAX_SOLC_TRIES", "8"))
+    except ValueError:
+        max_tries = 8
+    attempt_log: list[tuple[str, str, str]] = []
+    tried_versions: set[str] = set()
+    stop = False
+    prefix_dir = tempfile.TemporaryDirectory() if compile_contents and not project_input else nullcontext()
+    with prefix_dir as tmp:
+        dest = Path(tmp) / path.name if tmp else None
+        if dest is not None:
+            dest.write_text(compile_contents[path], encoding="utf-8")
+        for selected_solc, solc in solc_candidates(path, solc_version):
+            if selected_solc not in tried_versions:
+                if len(tried_versions) >= max_tries:
+                    break
+                tried_versions.add(selected_solc)
+            attempts = ["", "--optimize"]
+            if tuple(map(int, selected_solc.split("."))) >= (0, 8, 13):
+                attempts.append("--via-ir --optimize")
+            for selected_solc_args in attempts:
+                try:
+                    if project_input:
+                        compiled = _project_compilation(path, source_files, solc, selected_solc_args, solc_remaps, compile_contents or None)
+                    elif dest is not None:
+                        compiled = Slither(str(dest), solc_remaps=solc_remaps, solc=str(solc), solc_args=selected_solc_args)
+                    else:
+                        # solc 0.8.11 on Windows drops the drive prefix from absolute
+                        # source-unit names. Compile a drive-relative target while
+                        # preserving its directory hierarchy for relative imports.
+                        compiled = Slither(compiler_target, solc_remaps=solc_remaps, solc=str(solc), solc_args=selected_solc_args, **compiler_working_dir)
+                    if not compiled.contracts:
+                        raise RuntimeError("No contracts were found")
+                    slither = compiled
+                    break
+                except (Exception, SystemExit) as error:
+                    last_error = error
+                    error_class = classify_compile_error(str(error))
+                    attempt_log.append((selected_solc, selected_solc_args, error_class))
+                    if error_class == "missing_import":
+                        stop = True
+                        break
+            if slither is not None or stop:
                 break
-            except (Exception, SystemExit) as error:
-                last_error = error
-        if slither is not None:
-            break
-    if slither is None:
-        assert last_error is not None
-        raise last_error
-    return _build_graph(slither, path, sources, source_files, selected_solc, selected_solc_args, project_input)
+        if slither is None:
+            last_text = "" if last_error is None else str(last_error)
+            tried = "; ".join(f"{version}/{args}/{cls}" for version, args, cls in attempt_log)
+            raise ExtractError(f"{last_text}\n[spider] tried: {tried}", attempt_log) from last_error
+        return _build_graph(slither, path, sources, source_files, selected_solc, selected_solc_args, project_input)
